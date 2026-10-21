@@ -11,13 +11,19 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png'],
+        includeAssets: [
+          'icon.svg',
+          'apple-touch-icon.png',
+          'pwa-192x192.png',
+          'pwa-512x512.png',
+          'pwa-maskable-512x512.png',
+        ],
         manifest: {
           id: '/',
           name: 'Интерактивная Читалка — Библиотека с тестами',
           short_name: 'Читалка',
           description: 'Офлайн-ориентированная интерактивная читалка-библиотека с проверочными тестами.',
-          theme_color: '#1e293b',
+          theme_color: '#0A2B52',
           background_color: '#F8F6F1',
           display: 'standalone',
           start_url: '/',

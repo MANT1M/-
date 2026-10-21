@@ -5,15 +5,56 @@ import zlib from 'zlib';
 import { execSync } from 'child_process';
 
 /**
- * Generates a complete, standalone offline HTML bundle for assets/index.html inside the APK
+ * Extracts EASY_GOOD_DEEDS_BOOK and ISLAMIC_PSYCHOLOGY_BOOK
+ * and generates a complete, standalone offline HTML bundle for assets/index.html inside the APK
  */
+function loadBookFromTsFile(relPath, exportName) {
+  const tsSource = fs.readFileSync(path.resolve(process.cwd(), relPath), 'utf8');
+  const regex = new RegExp(`export\\s+const\\s+${exportName}\\s*:\\s*BookData\\s*=\\s*`);
+  const jsCode = tsSource.replace(/import\s+type\s+.*?;\s*/g, '').replace(regex, 'return ');
+  return new Function(jsCode)();
+}
+
 function buildStandaloneReaderHtml() {
+  const rawBooks = [
+    loadBookFromTsFile('src/data/easyGoodDeedsData.ts', 'EASY_GOOD_DEEDS_BOOK'),
+    loadBookFromTsFile('src/data/islamicPsychologyData.ts', 'ISLAMIC_PSYCHOLOGY_BOOK'),
+  ];
+
+  const booksPayload = rawBooks.map((book) => ({
+    id: book.id,
+    title: book.title,
+    author: book.author,
+    year: book.year,
+    genre: book.genre,
+    description: book.description,
+    bg: book.coverPalette.bg,
+    accent: book.coverPalette.accent,
+    chapters: book.chapters.map((ch, idx) => ({
+      id: ch.id,
+      bookId: book.id,
+      index: idx,
+      order: ch.chapterOrder,
+      title: ch.title,
+      subtitle: `Часть ${ch.chapterOrder} из ${book.chapters.length} · Проверочных вопросов: ${ch.quiz.length}`,
+      content: ch.content,
+      questions: ch.quiz.map((q) => ({
+        q: q.question,
+        opts: q.options,
+        correct: q.correctAnswerIndex,
+        exp: q.explanation,
+      })),
+    })),
+  }));
+
+  const serializedBooks = JSON.stringify(booksPayload);
+
   return `<!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-<title>Интерактивная Читалка</title>
+<title>Интерактивная Читалка — Библиотека с тестами</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
@@ -27,10 +68,21 @@ function buildStandaloneReaderHtml() {
   .top-bar {
     position: sticky; top: 0; z-index: 30;
     display: flex; align-items: center; justify-content: space-between;
-    padding: 14px 16px; background: #1E293B; color: #FFFFFF;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+    padding: 14px 16px; background: #06372C; color: #FEF3C7;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
   }
-  .top-bar h1 { margin: 0; font-size: 17px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .top-bar h1 { margin: 0; font-size: 16px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .book-tabs {
+    display: flex; gap: 8px; margin-bottom: 14px; overflow-x: auto; padding-bottom: 2px;
+  }
+  .book-tab {
+    flex: 1; min-width: 145px; padding: 11px 12px; border-radius: 12px;
+    border: 2px solid #CBD5E1; background: #FFFFFF; color: #1E293B;
+    font-size: 13px; font-weight: 700; cursor: pointer; text-align: left;
+  }
+  .book-tab-active {
+    border-color: #06372C; background: #06372C; color: #FEF3C7;
+  }
   .btn {
     border: none; border-radius: 12px; padding: 12px 16px;
     font-size: 14px; font-weight: 600; cursor: pointer;
@@ -38,7 +90,7 @@ function buildStandaloneReaderHtml() {
     transition: opacity 0.15s, transform 0.1s;
   }
   .btn:active { transform: scale(0.98); }
-  .btn-primary { background: #1E293B; color: #FFFFFF; }
+  .btn-primary { background: #06372C; color: #FEF3C7; }
   .btn-emerald { background: #15803D; color: #FFFFFF; }
   .btn-amber { background: #B45309; color: #FFFFFF; }
   .btn-outline { background: transparent; border: 1.5px solid #CBD5E1; color: #1E293B; }
@@ -49,9 +101,17 @@ function buildStandaloneReaderHtml() {
     border: 1px solid #E5E0D5; margin-bottom: 14px;
     box-shadow: 0 1px 3px rgba(0,0,0,0.04);
   }
-  .book-header { background: #162032; color: #FEF3C7; border-radius: 16px; padding: 20px; margin-bottom: 18px; }
+  .book-header {
+    background: #06372C; color: #FEF3C7; border-radius: 16px; padding: 20px; margin-bottom: 16px;
+    border: 1px solid #B45309;
+  }
   .book-header h2 { margin: 0 0 6px 0; font-size: 22px; font-family: Georgia, serif; }
-  .book-header p { margin: 0; font-size: 13px; color: #FDE68A; opacity: 0.9; line-height: 1.45; }
+  .book-header p { margin: 0; font-size: 13px; color: #FDE68A; opacity: 0.92; line-height: 1.48; }
+  .search-input {
+    width: 100%; padding: 12px 14px; border-radius: 12px;
+    border: 1px solid #CBD5E1; background: #FFFFFF; color: #0F172A;
+    font-size: 14px; margin-bottom: 14px; outline: none;
+  }
   .progress-track { width: 100%; height: 8px; background: rgba(255,255,255,0.2); border-radius: 4px; overflow: hidden; margin-top: 10px; }
   .progress-fill { height: 100%; background: #F59E0B; transition: width 0.3s; }
   .chapter-card { display: flex; flex-direction: column; gap: 10px; }
@@ -72,7 +132,7 @@ function buildStandaloneReaderHtml() {
   .reader-text {
     font-family: Georgia, "Times New Roman", serif;
     white-space: pre-line; line-height: 1.55;
-    flex: 1; overflow: hidden;
+    flex: 1; overflow-y: auto;
   }
   .reader-footer {
     padding-top: 12px; border-top: 1px solid rgba(128,128,128,0.2);
@@ -89,7 +149,7 @@ function buildStandaloneReaderHtml() {
     border: 2px solid #E2E8F0; background: #F8FAFC; color: #0F172A;
     font-size: 15px; margin-bottom: 10px; display: flex; align-items: center; gap: 12px;
   }
-  .option-selected { border-color: #1E293B; background: #EFF6FF; font-weight: 600; }
+  .option-selected { border-color: #06372C; background: #ECFDF5; font-weight: 600; }
   .option-correct { border-color: #15803D; background: #DCFCE7; color: #14532D; font-weight: 600; }
   .option-wrong { border-color: #B91C1C; background: #FEE2E2; color: #7F1D1D; }
   .explanation-box {
@@ -101,78 +161,7 @@ function buildStandaloneReaderHtml() {
 <body>
 <div id="app" class="app-shell"></div>
 <script>
-const CHAPTERS = [
-  {
-    id: 1, index: 0,
-    title: "Глава 1. Скандал в Богемии",
-    subtitle: "История Ирен Адлер и короля Богемии",
-    content: \`Для Шерлока Холмса она всегда оставалась «Той самой женщиной». Я редко слышал, чтобы он называл её каким-либо другим именем. В его глазах она затмевала всех представительниц своего пола. Не то чтобы он испытывал к Ирен Адлер какое-то чувство, близкое к любви. Все эмоции, и особенно эта, были чужды его холодному, точному, но удивительно уравновешенному уму. Он был, на мой взгляд, совершеннейшей мыслящей и наблюдающей машиной, какую когда-либо видел мир, но в роли влюбленного он оказался бы не на своем месте. И тем не менее для него существовала только одна женщина, и этой женщиной была покойная Ирен Адлер, особа весьма сомнительной и двусмысленной репутации.
-
-Однажды вечером двадцать первого марта тысяча восемьсот восемьдесят восьмого года я возвращался от пациента (к тому времени я снова занялся врачебной практикой), и мой путь пролегал через Бейкер-стрит. Проходя мимо знакомой двери, которая навсегда останется связанной в моей памяти с временем моего сватовства и с мрачными событиями «Этюда в багровых тонах», я почувствовал острое желание повидать Холмса и узнать, как он применяет свои необыкновенные способности. В его комнатах горел яркий свет, и, подняв глаза, я увидел его высокую, худощавую фигуру, дважды мелькнувшую темным силуэтом на фоне спущенной шторы.
-
-В тот же вечер к нам явился таинственный посетитель в маске, назвавшийся графом фон Краммом, но Холмс в первые же минуты разоблачил в нем Вильгельма Готтсрейха Сигизмунда фон Ормштейна, наследного короля Богемии. Король собирался вступить в брак со скандинавской принцессой Клотильдой, однако пять лет назад в Варшаве он был близко знаком с американской оперной певицей Ирен Адлер. У Ирен осталась их совместная фотография кабинетного формата. Она пригрозила отправить этот снимок семье невесты в день официального объявления о помолвке.
-
-На следующее утро Шерлок Холмс отправился к дому Ирен Адлер в Брайриони-Лодж в облике безработного конюха. Завязав разговор со слугами у конюшни, он выяснил, что к мисс Адлер ежедневно наведывается адвокат Годфри Нортон. Вскоре Нортон и Ирен стремительно уехали в кэбе к церкви Святой Моники. Поспешив за ними, Холмс оказался в храме в тот самый момент, когда священнику не хватало одного свидетеля для законного оформления брака. Так переодетый сыщик стал шафером на тайном венчании Ирен Адлер и Годфри Нортона.
-
-Вечером того же дня при помощи доктора Ватсона Холмс разыграл блестящий спектакль. Переодевшись добродушным пожилым священником, он спровоцировал у порога дома Ирен Адлер потасовку. Добросердечная хозяйка велела внести «раненого пастора» в гостиную. По условному сигналу Холмса Ватсон бросил в открытое окно специальную дымовую ракету и закричал: «Пожар!». Ворвавшиеся в комнату клубы дыма заставили Ирен инстинктивно броситься к потайному стенному шкафчику, где она хранила самую ценную вещь — ту самую фотографию.
-
-Однако, когда Холмс, Ватсон и король Богемии прибыли в Брайриони-Лодж на следующее утро, дом оказался пуст. Ирен Адлер и её муж покинули Англию. В тайнике вместо компрометирующего двойного снимка лежала фотография самой Ирен в вечернем платье и письмо Шерлоку Холмсу. Она пообещала королю никогда не использовать старую фотографию против него. В знак глубочайшего восхищения умом этой женщины Холмс попросил у короля лишь один подарок — оставленный портрет Ирен Адлер.\`,
-    questions: [
-      {
-        q: "Как Шерлок Холмс называл Ирен Адлер в разговорах с доктором Ватсоном?",
-        opts: ["Королева Богемии", "Та самая женщина (Эта женщина)", "Леди из Нью-Джерси", "Тайная графиня"],
-        correct: 1,
-        exp: "Для Шерлока Холмса Ирен Адлер навсегда осталась «Той самой женщиной» («The Woman»), сумевшей перехитрить его."
-      },
-      {
-        q: "Какую хитрость использовал Холмс, чтобы узнать, где Ирен Адлер прячет фотографию?",
-        opts: ["Подкупил горничную", "Взломал сейф ночью", "Инсценировал драку и пожар с дымовой ракетой", "Прислал письмо от короля"],
-        correct: 2,
-        exp: "При крике «Пожар!» и появлении дыма Ирен инстинктивно бросилась спасать тайник с фотографией."
-      },
-      {
-        q: "Что Холмс попросил у короля Богемии в качестве награды?",
-        opts: ["Изумрудный перстень", "Тысячу фунтов золотом", "Фотографию Ирен Адлер в вечернем платье", "Золотую табакерку"],
-        correct: 2,
-        exp: "Отказавшись от изумрудного перстня, Холмс попросил лишь портрет Ирен Адлер."
-      }
-    ]
-  },
-  {
-    id: 2, index: 1,
-    title: "Глава 2. Союз рыжих",
-    subtitle: "Тайна переписывания «Британской энциклопедии»",
-    content: \`В погожий осенний день прошлого года я зашел навестить моего друга мистера Шерлока Холмса и застал его в глубокой беседе с весьма полным пожилым джентльменом с огненно-рыжими волосами — мистером Джабезом Уилсоном.
-
-Джабез Уилсон содержал небольшую ссудную кассу на Сакс-Кобург-сквер. Несколько месяцев назад он нанял молодого помощника Винсента Сполдинга, который согласился работать за половину жалованья и постоянно спускался в подвал проявлять фотографии. Именно Сполдинг показал хозяину объявление об открытии вакансии в «Союзе рыжих» с окладом четыре фунта стерлингов в неделю.
-
-Условия были удивительными: Уилсон должен был ежедневно находиться в конторе с десяти утра до двух часов дня, не покидая помещения, и переписывать от руки статьи из «Британской энциклопедии», начиная с буквы «А». На протяжении восьми недель ростовщик исправно переписывал статьи, пока однажды не обнаружил на двери табличку: «Союз рыжих распущен».
-
-Отправившись на Сакс-Кобург-сквер, Холмс постучал тростью по мостовой перед лавкой, затем позвонил в дверь ссудной кассы, чтобы взглянуть на колени брюк помощника Сполдинга — они были вытянутыми и испачканными землей. Прямо за домом Уилсона располагалось хранилище Городского и Пригородного банка.
-
-«Союз рыжих» оказался выдумкой преступника Джона Клея (Сполдинга), созданной с единственной целью — на четыре часа каждый день удалять хозяина из ссудной кассы, пока из подвала прорывался подземный ход к тридцати тысячам золотых наполеондоров в хранилище банка. Ночью Холмс, Ватсон и полиция устроили засаду в подземелье банка и схватили Джона Клея с поличным.\`,
-    questions: [
-      {
-        q: "Какую работу выполнял Джабез Уилсон в конторе «Союза рыжих»?",
-        opts: ["Сортировал векселя", "Переписывал от руки «Британскую энциклопедию»", "Составлял каталог рыжеволосых", "Переводил газеты"],
-        correct: 1,
-        exp: "Уилсону поручили переписывать «Британскую энциклопедию», чтобы удерживать его вне ссудной кассы по 4 часа в день."
-      },
-      {
-        q: "Какая деталь во внешности помощника убедила Холмса в том, что роется подкоп?",
-        opts: ["Глина на манжетах", "Мозоли на ладонях", "Вытянутые и испачканные на коленях брюки", "Угольная пыль"],
-        correct: 2,
-        exp: "Холмс специально посмотрел на колени брюк Сполдинга — они были измяты и испачканы землей."
-      },
-      {
-        q: "Что было главной целью преступника Джона Клея?",
-        opts: ["Ограбление хранилища банка с французским золотом", "Похищение бриллиантов Уилсона", "Побег из тюрьмы", "Печать банкнот"],
-        correct: 0,
-        exp: "Подвал лавки граничил с хранилищем банка, где хранились 30 000 золотых наполеондоров."
-      }
-    ]
-  }
-];
+const BOOKS = ${serializedBooks};
 
 const THEMES = {
   LIGHT: { name: "Светлая", bg: "#FAF9F6", fg: "#1C1B1F", surface: "#EFECE6" },
@@ -180,9 +169,25 @@ const THEMES = {
   NIGHT: { name: "Ночная", bg: "#141518", fg: "#D8DAE0", surface: "#202227" }
 };
 
+function createDefaultProgress() {
+  const prog = {};
+  BOOKS.forEach((b) => {
+    b.chapters.forEach((c, idx) => {
+      prog[c.id] = {
+        status: idx === 0 ? "AVAILABLE" : "LOCKED",
+        offset: 0,
+        bestScore: 0
+      };
+    });
+  });
+  return prog;
+}
+
 let state = {
   screen: "library",
-  chapterId: 1,
+  bookId: BOOKS[0].id,
+  searchQuery: "",
+  chapterId: BOOKS[0].chapters[0].id,
   pageIndex: 0,
   charOffset: 0,
   controlsVisible: true,
@@ -194,19 +199,30 @@ let state = {
   submitted: false,
   correctCount: 0,
   quizDone: false,
-  progress: {
-    1: { status: "AVAILABLE", offset: 0, bestScore: 0 },
-    2: { status: "LOCKED", offset: 0, bestScore: 0 }
-  }
+  progress: createDefaultProgress()
 };
 
 try {
-  const saved = localStorage.getItem("ir_apk_state_v1");
-  if (saved) state = Object.assign(state, JSON.parse(saved));
+  const saved = localStorage.getItem("ir_apk_two_books_v3");
+  if (saved) {
+    const parsed = JSON.parse(saved);
+    state = Object.assign(state, parsed, {
+      progress: Object.assign(createDefaultProgress(), parsed.progress || {})
+    });
+  }
 } catch (e) {}
 
 function saveState() {
-  try { localStorage.setItem("ir_apk_state_v1", JSON.stringify(state)); } catch (e) {}
+  try { localStorage.setItem("ir_apk_two_books_v3", JSON.stringify(state)); } catch (e) {}
+}
+
+function getActiveBook() {
+  return BOOKS.find(b => b.id === state.bookId) || BOOKS[0];
+}
+
+function getActiveChapter() {
+  const b = getActiveBook();
+  return b.chapters.find(c => c.id === state.chapterId) || b.chapters[0];
 }
 
 function paginate(text, fontSize) {
@@ -245,36 +261,67 @@ function paginate(text, fontSize) {
 function render() {
   saveState();
   const root = document.getElementById("app");
-  const ch = CHAPTERS.find(c => c.id === state.chapterId) || CHAPTERS[0];
+  const book = getActiveBook();
+  const ch = getActiveChapter();
 
   if (state.screen === "library") {
-    const passedCount = Object.values(state.progress).filter(p => p.status === "PASSED").length;
-    const ratio = Math.round((passedCount / CHAPTERS.length) * 100);
+    const passedCount = book.chapters.filter(c => state.progress[c.id] && state.progress[c.id].status === "PASSED").length;
+    const ratio = Math.round((passedCount / book.chapters.length) * 100);
+    const q = (state.searchQuery || "").trim().toLowerCase();
+    const visibleChapters = !q
+      ? book.chapters
+      : book.chapters.filter(c => c.title.toLowerCase().includes(q) || c.content.toLowerCase().includes(q));
+
     root.innerHTML = \`
-      <div class="top-bar"><h1>Интерактивная Читалка</h1></div>
+      <div class="top-bar" style="background:\${book.bg}">
+        <div style="display:flex;align-items:center;gap:10px">
+          <img src="data:image/svg+xml;base64,${fs.readFileSync(path.resolve(process.cwd(), 'public/icon.svg')).toString('base64')}" style="width:30px;height:30px;border-radius:7px;flex-shrink:0" alt="Иконка" />
+          <h1>Библиотека (2 книги)</h1>
+        </div>
+        <span style="font-size:12px;opacity:0.85">\${passedCount}/\${book.chapters.length} глав</span>
+      </div>
       <div class="container">
-        <div class="book-header">
-          <div style="font-size:11px;letter-spacing:1px;margin-bottom:6px;opacity:0.8">АРТУР КОНАН ДОЙЛ</div>
-          <h2>Приключения Шерлока Холмса</h2>
-          <p>Офлайн-издание с проверочными тестами. Для открытия следующей главы наберите не менее 75% в тесте.</p>
+        <div class="book-tabs">
+          \${BOOKS.map(b => \`
+            <button class="book-tab \${b.id === book.id ? 'book-tab-active' : ''}" style="\${b.id === book.id ? 'background:' + b.bg + ';border-color:' + b.bg : ''}" onclick="selectBook(\${b.id})">
+              <div style="font-size:10px;opacity:0.75;margin-bottom:2px">\${b.year} · \${b.chapters.length} глав</div>
+              <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">\${b.title}</div>
+            </button>
+          \`).join('')}
+        </div>
+
+        <div class="book-header" style="background:\${book.bg}">
+          <div style="font-size:11px;letter-spacing:0.6px;margin-bottom:6px;opacity:0.85">\${book.author.toUpperCase()} · \${book.year}</div>
+          <h2>\${book.title}</h2>
+          <p>\${book.description}</p>
           <div style="display:flex;justify-content:space-between;font-size:12px;margin-top:14px;font-weight:600">
-            <span>Прогресс книги</span><span>\${passedCount} / \${CHAPTERS.length} глав (\${ratio}%)</span>
+            <span>Прогресс чтения и тестов</span><span>\${passedCount} / \${book.chapters.length} глав (\${ratio}%)</span>
           </div>
           <div class="progress-track"><div class="progress-fill" style="width:\${ratio}%"></div></div>
         </div>
-        \${CHAPTERS.map(c => {
-          const p = state.progress[c.id];
+
+        <input
+          id="searchBox"
+          class="search-input"
+          type="text"
+          placeholder="Поиск по главам и темам книги «\${book.title}»..."
+          value="\${state.searchQuery.replace(/"/g, '&quot;')}"
+          oninput="onSearchInput(this.value)"
+        />
+
+        \${visibleChapters.map(c => {
+          const p = state.progress[c.id] || { status: "LOCKED", offset: 0, bestScore: 0 };
           const locked = p.status === "LOCKED";
           const passed = p.status === "PASSED";
           return \`
             <div class="card chapter-card \${locked ? 'chapter-locked' : ''}">
               <div class="meta-line">
-                \${passed ? 'Пройдено · Лучший тест: ' + p.bestScore + '%' : locked ? 'Заблокировано (нужно ≥ 75% в Главе 1)' : 'Доступно для чтения'}
+                \${passed ? 'Пройдено · Лучший результат: ' + p.bestScore + '%' : locked ? 'Заблокировано (сдайте предыдущий тест на ≥ 75%)' : 'Доступно для чтения'}
               </div>
-              <div style="font-size:18px;font-weight:700;font-family:Georgia,serif">\${c.title}</div>
-              <div style="font-size:13px;color:#475569">\${c.subtitle}</div>
+              <div style="font-size:17px;font-weight:700;font-family:Georgia,serif;line-height:1.35">\${c.title}</div>
+              <div style="font-size:12px;color:#475569">\${c.subtitle}</div>
               <div style="display:flex;gap:8px;margin-top:6px">
-                <button class="btn btn-primary" style="flex:1" \${locked ? 'disabled' : ''} onclick="openChapter(\${c.id})">
+                <button class="btn btn-primary" style="flex:1;background:\${book.bg}" \${locked ? 'disabled' : ''} onclick="openChapter(\${c.id})">
                   \${locked ? 'Заблокировано' : p.offset > 0 ? 'Продолжить чтение' : 'Читать главу'}
                 </button>
                 \${!locked ? \`<button class="btn btn-outline" onclick="startQuiz(\${c.id})">Тест</button>\` : ''}
@@ -297,7 +344,7 @@ function render() {
       <div class="reader-screen" style="background:\${t.bg};color:\${t.fg}">
         \${state.controlsVisible ? \`
           <div class="reader-hud-top" style="background:\${t.surface}">
-            <button class="btn btn-outline" style="padding:8px 12px;color:\${t.fg}" onclick="goLibrary()">← Книга</button>
+            <button class="btn btn-outline" style="padding:8px 12px;color:\${t.fg}" onclick="goLibrary()">← Книги</button>
             <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%">\${ch.title}</div>
             <button class="btn btn-outline" style="padding:8px 12px;color:\${t.fg}" onclick="toggleSettings()">Аа</button>
           </div>
@@ -305,7 +352,11 @@ function render() {
         <div class="reader-page-area" onclick="handleReaderTap(event, \${pages.length})">
           <div class="reader-text" style="font-size:\${state.fontSize}px">\${page.text}</div>
           <div class="reader-footer" onclick="event.stopPropagation()">
-            <span style="font-size:12px;opacity:0.75;font-family:monospace">Стр. \${state.pageIndex + 1} из \${pages.length}</span>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-outline" style="padding:8px 12px;color:\${t.fg}" \${state.pageIndex === 0 ? 'disabled' : ''} onclick="turnPage(-1, \${pages.length})">←</button>
+              <button class="btn btn-outline" style="padding:8px 12px;color:\${t.fg}" \${isLast ? 'disabled' : ''} onclick="turnPage(1, \${pages.length})">→</button>
+            </div>
+            <span style="font-size:12px;opacity:0.75;font-family:monospace">Стр. \${state.pageIndex + 1} / \${pages.length}</span>
             \${isLast ? \`<button class="btn btn-amber" onclick="startQuiz(\${ch.id})">Пройти тест →</button>\` : ''}
           </div>
         </div>
@@ -335,13 +386,14 @@ function render() {
     if (!state.quizDone) {
       const q = ch.questions[state.qIndex];
       root.innerHTML = \`
-        <div class="top-bar">
-          <button class="btn" style="background:transparent;color:#FFF;padding:4px 8px" onclick="openChapter(\${ch.id})">← К главе</button>
+        <div class="top-bar" style="background:\${book.bg}">
+          <button class="btn" style="background:transparent;color:#FEF3C7;padding:4px 8px" onclick="openChapter(\${ch.id})">← К главе</button>
           <h1>Вопрос \${state.qIndex + 1} из \${ch.questions.length}</h1>
           <span style="font-size:12px">Верно: \${state.correctCount}</span>
         </div>
         <div class="container">
           <div class="card">
+            <div style="font-size:12px;color:#64748B;margin-bottom:6px">\${book.title} · \${ch.title}</div>
             <div style="font-size:18px;font-weight:700;margin-bottom:16px;line-height:1.35">\${q.q}</div>
             \${q.opts.map((opt, i) => {
               let cls = "option-btn";
@@ -356,8 +408,8 @@ function render() {
             \${state.submitted ? \`<div class="explanation-box"><b>Пояснение:</b> \${q.exp}</div>\` : ''}
             <div style="margin-top:16px">
               \${!state.submitted
-                ? \`<button class="btn btn-primary" style="width:100%" \${state.selectedOpt === null ? 'disabled' : ''} onclick="submitAns()">Проверить ответ</button>\`
-                : \`<button class="btn btn-primary" style="width:100%" onclick="nextQ()">\${state.qIndex + 1 < ch.questions.length ? 'Следующий вопрос →' : 'Завершить тест'}</button>\`
+                ? \`<button class="btn btn-primary" style="width:100%;background:\${book.bg}" \${state.selectedOpt === null ? 'disabled' : ''} onclick="submitAns()">Проверить ответ</button>\`
+                : \`<button class="btn btn-primary" style="width:100%;background:\${book.bg}" onclick="nextQ()">\${state.qIndex + 1 < ch.questions.length ? 'Следующий вопрос →' : 'Завершить тест'}</button>\`
               }
             </div>
           </div>
@@ -366,22 +418,22 @@ function render() {
     } else {
       const score = Math.round((state.correctCount / ch.questions.length) * 100);
       const passed = score >= 75;
-      const nextCh = CHAPTERS.find(c => c.index === ch.index + 1);
+      const nextCh = book.chapters.find(c => c.index === ch.index + 1);
       root.innerHTML = \`
-        <div class="top-bar"><h1>Результат теста</h1></div>
+        <div class="top-bar" style="background:\${book.bg}"><h1>Результат теста</h1></div>
         <div class="container">
           <div class="card" style="text-align:center;padding:28px 18px">
             <div style="font-size:48px;font-weight:800;color:\${passed ? '#15803D' : '#B91C1C'}">\${score}%</div>
             <h2 style="margin:8px 0">\${passed ? 'Глава успешно пройдена!' : 'Тест не пройден'}</h2>
             <p style="color:#475569;font-size:14px;line-height:1.5">
               Правильных ответов: \${state.correctCount} из \${ch.questions.length}.
-              \${passed ? (nextCh ? 'Следующая глава разблокирована!' : 'Все главы книги пройдены!') : 'Для открытия следующей главы нужно набрать минимум 75%.'}
+              \${passed ? (nextCh ? 'Следующая глава («' + nextCh.title + '») разблокирована!' : 'Вы прошли все главы книги «' + book.title + '»!') : 'Для открытия следующей главы необходимо набрать минимум 75%.'}
             </p>
             <div style="display:flex;flex-direction:column;gap:10px;margin-top:20px">
               \${passed && nextCh ? \`<button class="btn btn-emerald" onclick="openChapter(\${nextCh.id})">Следующая глава →</button>\` : ''}
-              <button class="btn btn-primary" onclick="openChapter(\${ch.id})">\${passed ? 'Вернуться к главе' : 'Перечитать главу'}</button>
+              <button class="btn btn-primary" style="background:\${book.bg}" onclick="openChapter(\${ch.id})">\${passed ? 'Вернуться к главе' : 'Перечитать главу'}</button>
               <button class="btn btn-outline" onclick="startQuiz(\${ch.id})">Повторить тест</button>
-              <button class="btn btn-outline" onclick="goLibrary()">В оглавление книги</button>
+              <button class="btn btn-outline" onclick="goLibrary()">В библиотеку</button>
             </div>
           </div>
         </div>
@@ -390,34 +442,46 @@ function render() {
   }
 }
 
+window.selectBook = (bookId) => {
+  state.bookId = bookId;
+  const b = getActiveBook();
+  state.chapterId = b.chapters[0].id;
+  render();
+};
+window.onSearchInput = (val) => {
+  state.searchQuery = val;
+  render();
+  const input = document.getElementById("searchBox");
+  if (input) {
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
+};
 window.goLibrary = () => { state.screen = "library"; render(); };
 window.openChapter = (id) => {
   state.chapterId = id;
-  state.charOffset = state.progress[id].offset || 0;
+  state.charOffset = (state.progress[id] && state.progress[id].offset) || 0;
   state.settingsOpen = false;
   state.screen = "reader";
+  render();
+};
+window.turnPage = (delta, totalPages) => {
+  const ch = getActiveChapter();
+  const pages = paginate(ch.content, state.fontSize);
+  const nextIdx = Math.min(Math.max(0, state.pageIndex + delta), totalPages - 1);
+  state.pageIndex = nextIdx;
+  state.charOffset = pages[state.pageIndex].start;
+  state.progress[state.chapterId].offset = state.charOffset;
   render();
 };
 window.handleReaderTap = (e, totalPages) => {
   if (state.settingsOpen) { state.settingsOpen = false; render(); return; }
   const x = e.clientX;
   const w = window.innerWidth;
-  const ch = CHAPTERS.find(c => c.id === state.chapterId);
-  const pages = paginate(ch.content, state.fontSize);
   if (x < w * 0.25) {
-    if (state.pageIndex > 0) {
-      state.pageIndex--;
-      state.charOffset = pages[state.pageIndex].start;
-      state.progress[state.chapterId].offset = state.charOffset;
-      render();
-    }
+    if (state.pageIndex > 0) window.turnPage(-1, totalPages);
   } else if (x > w * 0.75) {
-    if (state.pageIndex < totalPages - 1) {
-      state.pageIndex++;
-      state.charOffset = pages[state.pageIndex].start;
-      state.progress[state.chapterId].offset = state.charOffset;
-      render();
-    }
+    if (state.pageIndex < totalPages - 1) window.turnPage(1, totalPages);
   } else {
     state.controlsVisible = !state.controlsVisible;
     render();
@@ -434,12 +498,13 @@ window.startQuiz = (id) => {
 window.selectOpt = (i) => { if (!state.submitted) { state.selectedOpt = i; render(); } };
 window.submitAns = () => {
   if (state.selectedOpt === null || state.submitted) return;
-  const ch = CHAPTERS.find(c => c.id === state.chapterId);
+  const ch = getActiveChapter();
   if (state.selectedOpt === ch.questions[state.qIndex].correct) state.correctCount++;
   state.submitted = true; render();
 };
 window.nextQ = () => {
-  const ch = CHAPTERS.find(c => c.id === state.chapterId);
+  const book = getActiveBook();
+  const ch = getActiveChapter();
   if (state.qIndex + 1 < ch.questions.length) {
     state.qIndex++; state.selectedOpt = null; state.submitted = false;
   } else {
@@ -447,7 +512,7 @@ window.nextQ = () => {
     if (score >= 75) {
       state.progress[ch.id].status = "PASSED";
       state.progress[ch.id].bestScore = Math.max(state.progress[ch.id].bestScore, score);
-      const nextCh = CHAPTERS.find(c => c.index === ch.index + 1);
+      const nextCh = book.chapters.find(c => c.index === ch.index + 1);
       if (nextCh && state.progress[nextCh.id].status === "LOCKED") {
         state.progress[nextCh.id].status = "AVAILABLE";
       }
@@ -470,18 +535,20 @@ function buildBinaryAndroidManifest() {
   // Attribute resource IDs in Android framework (must be sorted ascending per element)
   const ATTR_THEME = 0x01010000;
   const ATTR_LABEL = 0x01010001;
+  const ATTR_ICON = 0x01010002;
   const ATTR_NAME = 0x01010003;
+  const ATTR_EXPORTED = 0x01010010;
+  const ATTR_MIN_SDK = 0x0101020c;
   const ATTR_VERSION_CODE = 0x0101021b;
   const ATTR_VERSION_NAME = 0x0101021c;
-  const ATTR_MIN_SDK = 0x0101020c;
   const ATTR_TARGET_SDK = 0x01010270;
   const ATTR_HARDWARE_ACCEL = 0x010102d3;
-  const ATTR_EXPORTED = 0x01010010;
 
-  // First 9 strings correspond to the resource IDs in the exact order below:
+  // First 10 strings correspond to the resource IDs in the exact order below:
   const resIds = [
     ATTR_THEME,
     ATTR_LABEL,
+    ATTR_ICON,
     ATTR_NAME,
     ATTR_EXPORTED,
     ATTR_MIN_SDK,
@@ -494,29 +561,30 @@ function buildBinaryAndroidManifest() {
   const strings = [
     'theme',                                      // 0 -> 0x01010000
     'label',                                      // 1 -> 0x01010001
-    'name',                                       // 2 -> 0x01010003
-    'exported',                                   // 3 -> 0x01010010
-    'minSdkVersion',                              // 4 -> 0x0101020c
-    'versionCode',                                // 5 -> 0x0101021b
-    'versionName',                                // 6 -> 0x0101021c
-    'targetSdkVersion',                           // 7 -> 0x01010270
-    'hardwareAccelerated',                        // 8 -> 0x010102d3
-    'android',                                    // 9
-    'http://schemas.android.com/apk/res/android', // 10
-    'manifest',                                   // 11
-    'package',                                    // 12
-    'com.example.interactivereader',              // 13
-    '1.0.0',                                      // 14
-    'uses-sdk',                                   // 15
-    'application',                                // 16
-    'Интерактивная Читалка',                      // 17
-    'activity',                                   // 18
-    'com.example.interactivereader.MainActivity', // 19
-    'intent-filter',                              // 20
-    'action',                                     // 21
-    'android.intent.action.MAIN',                 // 22
-    'category',                                   // 23
-    'android.intent.category.LAUNCHER',           // 24
+    'icon',                                       // 2 -> 0x01010002
+    'name',                                       // 3 -> 0x01010003
+    'exported',                                   // 4 -> 0x01010010
+    'minSdkVersion',                              // 5 -> 0x0101020c
+    'versionCode',                                // 6 -> 0x0101021b
+    'versionName',                                // 7 -> 0x0101021c
+    'targetSdkVersion',                           // 8 -> 0x01010270
+    'hardwareAccelerated',                        // 9 -> 0x010102d3
+    'android',                                    // 10
+    'http://schemas.android.com/apk/res/android', // 11
+    'manifest',                                   // 12
+    'package',                                    // 13
+    'com.example.interactivereader',              // 14
+    '2.0.0',                                      // 15
+    'uses-sdk',                                   // 16
+    'application',                                // 17
+    'Простые благодеяния',                        // 18
+    'activity',                                   // 19
+    'com.example.interactivereader.MainActivity', // 20
+    'intent-filter',                              // 21
+    'action',                                     // 22
+    'android.intent.action.MAIN',                 // 23
+    'category',                                   // 24
+    'android.intent.category.LAUNCHER',           // 25
   ];
 
   // Encode UTF-16LE string pool
@@ -667,47 +735,49 @@ function buildBinaryAndroidManifest() {
   const TYPE_INT_BOOLEAN = 0x12;
 
   const xmlChunks = [
-    makeNamespaceChunk(true, 9, 10, 2),
-    // <manifest android:versionCode="1" android:versionName="1.0.0" package="com.example.interactivereader">
-    makeStartElementCorrect(11, 2, [
-      { ns: 10, nameIdx: 5, rawValIdx: -1, type: TYPE_INT_DEC, data: 1 },
-      { ns: 10, nameIdx: 6, rawValIdx: 14, type: TYPE_STRING, data: 14 },
-      { ns: -1, nameIdx: 12, rawValIdx: 13, type: TYPE_STRING, data: 13 },
+    makeNamespaceChunk(true, 10, 11, 2),
+    // <manifest android:versionCode="2" android:versionName="2.0.0" package="com.example.interactivereader">
+    makeStartElementCorrect(12, 2, [
+      { ns: 11, nameIdx: 6, rawValIdx: -1, type: TYPE_INT_DEC, data: 2 },
+      { ns: 11, nameIdx: 7, rawValIdx: 15, type: TYPE_STRING, data: 15 },
+      { ns: -1, nameIdx: 13, rawValIdx: 14, type: TYPE_STRING, data: 14 },
     ]),
     // <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="28" />
-    makeStartElementCorrect(15, 6, [
-      { ns: 10, nameIdx: 4, rawValIdx: -1, type: TYPE_INT_DEC, data: 21 },
-      { ns: 10, nameIdx: 7, rawValIdx: -1, type: TYPE_INT_DEC, data: 28 },
+    makeStartElementCorrect(16, 6, [
+      { ns: 11, nameIdx: 5, rawValIdx: -1, type: TYPE_INT_DEC, data: 21 },
+      { ns: 11, nameIdx: 8, rawValIdx: -1, type: TYPE_INT_DEC, data: 28 },
     ]),
-    makeEndElement(15, 6),
-    // <application android:theme="@android:style/Theme.Material.Light.NoActionBar" (0x01030224) android:label="Интерактивная Читалка" android:hardwareAccelerated="true">
-    makeStartElementCorrect(16, 8, [
-      { ns: 10, nameIdx: 0, rawValIdx: -1, type: TYPE_REFERENCE, data: 0x01030224 },
-      { ns: 10, nameIdx: 1, rawValIdx: 17, type: TYPE_STRING, data: 17 },
-      { ns: 10, nameIdx: 8, rawValIdx: -1, type: TYPE_INT_BOOLEAN, data: 0xffffffff },
+    makeEndElement(16, 6),
+    // <application android:theme="@android:style/Theme.Material.Light.NoActionBar" android:label="Простые благодеяния" android:icon="@drawable/ic_launcher" (0x7f010000) android:hardwareAccelerated="true">
+    makeStartElementCorrect(17, 8, [
+      { ns: 11, nameIdx: 0, rawValIdx: -1, type: TYPE_REFERENCE, data: 0x01030224 },
+      { ns: 11, nameIdx: 1, rawValIdx: 18, type: TYPE_STRING, data: 18 },
+      { ns: 11, nameIdx: 2, rawValIdx: -1, type: TYPE_REFERENCE, data: 0x7f010000 },
+      { ns: 11, nameIdx: 9, rawValIdx: -1, type: TYPE_INT_BOOLEAN, data: 0xffffffff },
     ]),
-    // <activity android:name="com.example.interactivereader.MainActivity" android:exported="true">
-    makeStartElementCorrect(18, 12, [
-      { ns: 10, nameIdx: 2, rawValIdx: 19, type: TYPE_STRING, data: 19 },
-      { ns: 10, nameIdx: 3, rawValIdx: -1, type: TYPE_INT_BOOLEAN, data: 0xffffffff },
+    // <activity android:icon="@drawable/ic_launcher" android:name="com.example.interactivereader.MainActivity" android:exported="true">
+    makeStartElementCorrect(19, 12, [
+      { ns: 11, nameIdx: 2, rawValIdx: -1, type: TYPE_REFERENCE, data: 0x7f010000 },
+      { ns: 11, nameIdx: 3, rawValIdx: 20, type: TYPE_STRING, data: 20 },
+      { ns: 11, nameIdx: 4, rawValIdx: -1, type: TYPE_INT_BOOLEAN, data: 0xffffffff },
     ]),
     // <intent-filter>
-    makeStartElementCorrect(20, 15, []),
+    makeStartElementCorrect(21, 15, []),
     // <action android:name="android.intent.action.MAIN" />
-    makeStartElementCorrect(21, 16, [
-      { ns: 10, nameIdx: 2, rawValIdx: 22, type: TYPE_STRING, data: 22 },
+    makeStartElementCorrect(22, 16, [
+      { ns: 11, nameIdx: 3, rawValIdx: 23, type: TYPE_STRING, data: 23 },
     ]),
-    makeEndElement(21, 16),
+    makeEndElement(22, 16),
     // <category android:name="android.intent.category.LAUNCHER" />
-    makeStartElementCorrect(23, 17, [
-      { ns: 10, nameIdx: 2, rawValIdx: 24, type: TYPE_STRING, data: 24 },
+    makeStartElementCorrect(24, 17, [
+      { ns: 11, nameIdx: 3, rawValIdx: 25, type: TYPE_STRING, data: 25 },
     ]),
-    makeEndElement(23, 17),
-    makeEndElement(20, 18),
-    makeEndElement(18, 19),
-    makeEndElement(16, 20),
-    makeEndElement(11, 21),
-    makeNamespaceChunk(false, 9, 10, 21),
+    makeEndElement(24, 17),
+    makeEndElement(21, 18),
+    makeEndElement(19, 19),
+    makeEndElement(17, 20),
+    makeEndElement(12, 21),
+    makeNamespaceChunk(false, 10, 11, 21),
   ];
 
   const bodyBuf = Buffer.concat([stringPoolBuf, resMapBuf, ...xmlChunks]);
@@ -717,6 +787,118 @@ function buildBinaryAndroidManifest() {
   headerBuf.writeUInt32LE(8 + bodyBuf.length, 4);
 
   return Buffer.concat([headerBuf, bodyBuf]);
+}
+
+/**
+ * Builds a valid Android resources.arsc table mapping 0x7f010000 (@drawable/ic_launcher)
+ * to res/drawable/ic_launcher.png
+ */
+function buildResourcesArsc() {
+  function makeUtf16StringPool(strList) {
+    const encoded = strList.map((str) => {
+      const strBuf = Buffer.from(str, 'utf16le');
+      const lenBuf = Buffer.alloc(2);
+      lenBuf.writeUInt16LE(str.length, 0);
+      const nullBuf = Buffer.alloc(2, 0);
+      return Buffer.concat([lenBuf, strBuf, nullBuf]);
+    });
+    const offsets = [];
+    let cur = 0;
+    for (const b of encoded) {
+      offsets.push(cur);
+      cur += b.length;
+    }
+    while (cur % 4 !== 0) {
+      encoded.push(Buffer.alloc(1, 0));
+      cur += 1;
+    }
+    const headerSize = 28;
+    const offsetsSize = strList.length * 4;
+    const stringsStart = headerSize + offsetsSize;
+    const totalSize = stringsStart + cur;
+    const buf = Buffer.alloc(totalSize);
+    buf.writeUInt16LE(0x0001, 0); // RES_STRING_POOL_TYPE
+    buf.writeUInt16LE(headerSize, 2);
+    buf.writeUInt32LE(totalSize, 4);
+    buf.writeUInt32LE(strList.length, 8);
+    buf.writeUInt32LE(0, 12);
+    buf.writeUInt32LE(0, 16); // UTF-16
+    buf.writeUInt32LE(stringsStart, 20);
+    buf.writeUInt32LE(0, 24);
+    for (let i = 0; i < offsets.length; i++) {
+      buf.writeUInt32LE(offsets[i], headerSize + i * 4);
+    }
+    Buffer.concat(encoded).copy(buf, stringsStart);
+    return buf;
+  }
+
+  const globalPool = makeUtf16StringPool(['res/drawable/ic_launcher.png']);
+  const typePool = makeUtf16StringPool(['drawable']);
+  const keyPool = makeUtf16StringPool(['ic_launcher']);
+
+  // ResTable_typeSpec (type 0x0202)
+  const typeSpecBuf = Buffer.alloc(20);
+  typeSpecBuf.writeUInt16LE(0x0202, 0);
+  typeSpecBuf.writeUInt16LE(16, 2);
+  typeSpecBuf.writeUInt32LE(20, 4);
+  typeSpecBuf.writeUInt8(1, 8); // id = 1 (drawable)
+  typeSpecBuf.writeUInt32LE(1, 12); // entryCount = 1
+  typeSpecBuf.writeUInt32LE(0, 16); // flags[0] = 0
+
+  // ResTable_type (type 0x0201)
+  // Header: 8 (ResChunk_header) + 4 (id/res0/res1) + 4 (entryCount) + 4 (entriesStart) + 36 (ResTable_config) = 56 bytes
+  const typeHeaderSize = 56;
+  const entriesStart = typeHeaderSize + 4; // 1 offset (4 bytes)
+  const entryDataSize = 16; // ResTable_entry (8) + Res_value (8)
+  const typeChunkSize = entriesStart + entryDataSize;
+  const typeBuf = Buffer.alloc(typeChunkSize);
+  typeBuf.writeUInt16LE(0x0201, 0);
+  typeBuf.writeUInt16LE(typeHeaderSize, 2);
+  typeBuf.writeUInt32LE(typeChunkSize, 4);
+  typeBuf.writeUInt8(1, 8); // id = 1
+  typeBuf.writeUInt32LE(1, 12); // entryCount = 1
+  typeBuf.writeUInt32LE(entriesStart, 16); // entriesStart = 60
+  typeBuf.writeUInt32LE(36, 20); // ResTable_config.size = 36
+  // entryOffsets[0] at offset 56 = 0
+  typeBuf.writeUInt32LE(0, 56);
+  // ResTable_entry at offset 60:
+  typeBuf.writeUInt16LE(8, 60); // size = 8
+  typeBuf.writeUInt16LE(0, 62); // flags = 0
+  typeBuf.writeUInt32LE(0, 64); // key = 0 ('ic_launcher' in keyPool)
+  // Res_value at offset 68:
+  typeBuf.writeUInt16LE(8, 68); // size = 8
+  typeBuf.writeUInt8(0, 70); // res0 = 0
+  typeBuf.writeUInt8(0x03, 71); // dataType = TYPE_STRING (0x03)
+  typeBuf.writeUInt32LE(0, 72); // data = 0 ('res/drawable/ic_launcher.png' in globalPool)
+
+  // ResTable_package (type 0x0200, headerSize = 288)
+  const pkgHeaderSize = 288;
+  const pkgBody = Buffer.concat([typePool, keyPool, typeSpecBuf, typeBuf]);
+  const pkgTotalSize = pkgHeaderSize + pkgBody.length;
+  const pkgHeader = Buffer.alloc(pkgHeaderSize);
+  pkgHeader.writeUInt16LE(0x0200, 0);
+  pkgHeader.writeUInt16LE(pkgHeaderSize, 2);
+  pkgHeader.writeUInt32LE(pkgTotalSize, 4);
+  pkgHeader.writeUInt32LE(0x7f, 8); // package id = 0x7f
+  const pkgNameBuf = Buffer.from('com.example.interactivereader', 'utf16le');
+  pkgNameBuf.copy(pkgHeader, 12);
+  pkgHeader.writeUInt32LE(pkgHeaderSize, 268); // typeStrings offset
+  pkgHeader.writeUInt32LE(1, 272); // lastPublicType
+  pkgHeader.writeUInt32LE(pkgHeaderSize + typePool.length, 276); // keyStrings offset
+  pkgHeader.writeUInt32LE(1, 280); // lastPublicKey
+  pkgHeader.writeUInt32LE(0, 284); // typeIdOffset
+
+  const pkgChunk = Buffer.concat([pkgHeader, pkgBody]);
+
+  // ResTable_header (type 0x0002, headerSize = 12)
+  const tableHeader = Buffer.alloc(12);
+  const tableTotalSize = 12 + globalPool.length + pkgChunk.length;
+  tableHeader.writeUInt16LE(0x0002, 0);
+  tableHeader.writeUInt16LE(12, 2);
+  tableHeader.writeUInt32LE(tableTotalSize, 4);
+  tableHeader.writeUInt32LE(1, 8); // packageCount = 1
+
+  return Buffer.concat([tableHeader, globalPool, pkgChunk]);
 }
 
 /**
@@ -1126,6 +1308,8 @@ function buildSignedApk(outputPath) {
   fs.mkdirSync(tmpDir, { recursive: true });
 
   const manifestBin = buildBinaryAndroidManifest();
+  const resourcesArsc = buildResourcesArsc();
+  const icLauncherPng = fs.readFileSync(path.resolve(process.cwd(), 'public/pwa-192x192.png'));
   const classesDex = buildClassesDex();
   const indexHtml = Buffer.from(buildStandaloneReaderHtml(), 'utf8');
 
@@ -1138,6 +1322,12 @@ function buildSignedApk(outputPath) {
     '',
     'Name: AndroidManifest.xml',
     `SHA-256-Digest: ${sha256B64(manifestBin)}`,
+    '',
+    'Name: resources.arsc',
+    `SHA-256-Digest: ${sha256B64(resourcesArsc)}`,
+    '',
+    'Name: res/drawable/ic_launcher.png',
+    `SHA-256-Digest: ${sha256B64(icLauncherPng)}`,
     '',
     'Name: classes.dex',
     `SHA-256-Digest: ${sha256B64(classesDex)}`,
@@ -1161,6 +1351,12 @@ function buildSignedApk(outputPath) {
     '',
     'Name: AndroidManifest.xml',
     `SHA-256-Digest: ${sectionHash('AndroidManifest.xml', sha256B64(manifestBin))}`,
+    '',
+    'Name: resources.arsc',
+    `SHA-256-Digest: ${sectionHash('resources.arsc', sha256B64(resourcesArsc))}`,
+    '',
+    'Name: res/drawable/ic_launcher.png',
+    `SHA-256-Digest: ${sectionHash('res/drawable/ic_launcher.png', sha256B64(icLauncherPng))}`,
     '',
     'Name: classes.dex',
     `SHA-256-Digest: ${sectionHash('classes.dex', sha256B64(classesDex))}`,
@@ -1192,6 +1388,8 @@ function buildSignedApk(outputPath) {
   // Assemble uncompressed, 4-byte aligned ZIP archive with APK Signature Scheme v2 block!
   const entries = [
     { name: 'AndroidManifest.xml', data: manifestBin },
+    { name: 'resources.arsc', data: resourcesArsc },
+    { name: 'res/drawable/ic_launcher.png', data: icLauncherPng },
     { name: 'classes.dex', data: classesDex },
     { name: 'assets/index.html', data: indexHtml },
     { name: 'META-INF/MANIFEST.MF', data: mfBuf },
@@ -1376,6 +1574,14 @@ function buildApkSigBlockV2(contentsBuf, cdBuf, eocdBuf, privateKeyPem, certDerB
   return Buffer.concat([sizeBuf1, pairsBuf, sizeBuf2, magicBuf]);
 }
 
-const outPath = path.resolve('/app/applet/public/InteractiveReader.apk');
+const outPath = path.resolve(process.cwd(), 'public/InteractiveReader.apk');
 const sizeBytes = buildSignedApk(outPath);
 console.log(`Successfully built signed APK at ${outPath} (${sizeBytes} bytes)`);
+
+const distDir = path.resolve(process.cwd(), 'dist');
+if (fs.existsSync(distDir)) {
+  const distApk = path.resolve(distDir, 'InteractiveReader.apk');
+  fs.copyFileSync(outPath, distApk);
+  console.log(`Successfully mirrored APK to ${distApk}`);
+}
+

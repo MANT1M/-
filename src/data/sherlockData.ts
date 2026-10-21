@@ -235,7 +235,7 @@ export function paginateChapterText(
   const cached = paginationCache.get(cacheKey);
   if (cached) return cached;
 
-  const avgCharWidthPx = fontSizeSp * 0.54;
+  const avgCharWidthPx = fontSizeSp * 0.58;
   const charsPerLine = Math.max(22, Math.floor(safeWidth / avgCharWidthPx));
   const maxLinesPerPage = Math.max(5, Math.floor(safeHeight / lineHeightPx));
 
@@ -264,8 +264,10 @@ export function paginateChapterText(
       const maxLineEnd = Math.min(cursor + charsPerLine, totalLength);
 
       if (nextNewline !== -1 && nextNewline <= maxLineEnd) {
+        const segmentLen = nextNewline - cursor;
         cursor = nextNewline + 1;
-        linesUsed += 1.35; // Учитываем межстрочный интервал абзаца
+        // Empty line between paragraphs adds 0.75 line spacing; text line before newline adds 1 line
+        linesUsed += segmentLen === 0 ? 0.75 : 1.0;
         lastValidCut = cursor;
       } else {
         let lineCut = maxLineEnd;

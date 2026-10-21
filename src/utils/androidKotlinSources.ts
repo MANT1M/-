@@ -338,4 +338,116 @@ class TextPaginator @Inject constructor(
 }
 `,
   },
+  {
+    path: 'app/src/main/java/com/example/interactivereader/core/database/entity/ChapterContentJsonModels.kt',
+    category: 'Core & Room DB',
+    description: 'Kotlinx Serialization + Room FTS5 модели нормализованной главы (BiDi \\u2067...\\u2069, {{fn:ID}}, search_text)',
+    content: `package com.example.interactivereader.core.database.entity
+
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.BaselineShift
+import androidx.compose.ui.unit.sp
+import androidx.room.ColumnInfo
+import androidx.room.Entity
+import androidx.room.Fts4
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+
+@Serializable
+data class NormalizedChapterDocument(
+    @SerialName("book_id") val bookId: String,
+    @SerialName("chapter_id") val chapterId: String,
+    @SerialName("chapter_number") val chapterNumber: Int,
+    @SerialName("chunk_meta") val chunkMeta: NormalizedChunkMeta,
+    @SerialName("title") val title: NormalizedTitle,
+    @SerialName("blocks") val blocks: List<NormalizedBlock>,
+    @SerialName("footnotes") val footnotes: List<NormalizedFootnote>
+)
+
+@Serializable
+data class NormalizedChunkMeta(
+    @SerialName("current_chunk") val currentChunk: Int,
+    @SerialName("total_chunks") val totalChunks: Int,
+    @SerialName("has_more") val hasMore: Boolean
+)
+
+@Serializable
+data class NormalizedTitle(
+    @SerialName("ru") val ru: String,
+    @SerialName("en") val en: String,
+    @SerialName("ar") val ar: String
+)
+
+@Serializable
+data class NormalizedTypography(
+    @SerialName("font_scale") val fontScale: Float = 1.0f,
+    @SerialName("line_height_multiplier") val lineHeightMultiplier: Float = 1.3f
+)
+
+@Serializable
+data class NormalizedBlock(
+    @SerialName("id") val id: String,
+    @SerialName("type") val type: String, // "paragraph" | "verse_pair" | "vocabulary_item"
+    @SerialName("language") val language: String, // "ru" | "en" | "ar"
+    @SerialName("direction") val direction: String, // "ltr" | "rtl"
+    @SerialName("typography") val typography: NormalizedTypography,
+    @SerialName("is_copyable") val isCopyable: Boolean = true,
+    @SerialName("text") val text: String? = null,
+    @SerialName("sadr") val sadr: String? = null,
+    @SerialName("ajuz") val ajuz: String? = null,
+    @SerialName("copy_text") val copyText: String,
+    @SerialName("search_text") val searchText: String
+)
+
+@Serializable
+data class NormalizedFootnote(
+    @SerialName("id") val id: String,
+    @SerialName("anchor_text") val anchorText: String,
+    @SerialName("language") val language: String,
+    @SerialName("text") val text: String? = null,
+    @SerialName("is_missing") val isMissing: Boolean = false
+)
+
+@Fts4
+@Entity(tableName = "chapter_blocks_fts")
+data class ChapterBlockFtsEntity(
+    @ColumnInfo(name = "book_id") val bookId: String,
+    @ColumnInfo(name = "chapter_id") val chapterId: String,
+    @ColumnInfo(name = "block_id") val blockId: String,
+    @ColumnInfo(name = "search_text") val searchText: String
+)
+
+/**
+ * Преобразует строку блока с маркерами {{fn:ID}} и BiDi-изоляторами (\\u2067...\\u2069)
+ * в кликабельный AnnotatedString для Jetpack Compose Text.
+ */
+fun buildFootnoteAnnotatedString(rawText: String): AnnotatedString = buildAnnotatedString {
+    val regex = Regex("""\\{\\{fn:([^}]+)\\}\\}""")
+    var lastIndex = 0
+    for (match in regex.findAll(rawText)) {
+        append(rawText.substring(lastIndex, match.range.first))
+        val fnId = match.groupValues[1]
+        pushStringAnnotation(tag = "FOOTNOTE", annotation = fnId)
+        pushStyle(
+            SpanStyle(
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                baselineShift = BaselineShift.Superscript
+            )
+        )
+        append("[$fnId]")
+        pop()
+        pop()
+        lastIndex = match.range.last + 1
+    }
+    if (lastIndex < rawText.length) {
+        append(rawText.substring(lastIndex))
+    }
+}
+`,
+  },
 ];
+

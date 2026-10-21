@@ -1,5 +1,5 @@
 import JSZip from 'jszip';
-import { SHERLOCK_CHAPTERS } from '../data/sherlockData';
+import { EASY_GOOD_DEEDS_BOOK } from '../data/easyGoodDeedsData';
 import { ADDITIONAL_KOTLIN_FILES } from './androidKotlinSources';
 
 export interface ProjectFileItem {
@@ -10,8 +10,21 @@ export interface ProjectFileItem {
 }
 
 export function getAndroidProjectFiles(): ProjectFileItem[] {
-  const ch1Text = SHERLOCK_CHAPTERS[0].content;
-  const ch2Text = SHERLOCK_CHAPTERS[1].content;
+  const chaptersKotlinList = EASY_GOOD_DEEDS_BOOK.chapters
+    .map(
+      (ch, idx) =>
+        `ChapterEntity(${ch.id}L, bookId, ${idx}, ${JSON.stringify(ch.title)}, ${JSON.stringify(ch.content)})`
+    )
+    .join(',\n                    ');
+
+  const progressKotlinList = EASY_GOOD_DEEDS_BOOK.chapters
+    .map(
+      (ch, idx) =>
+        `ChapterProgressEntity(bookId, ${ch.id}L, ChapterStatus.${
+          idx === 0 ? 'AVAILABLE' : 'LOCKED'
+        }, 0, 0, now)`
+    )
+    .join(',\n                    ');
 
   return [
     {
@@ -525,7 +538,7 @@ data class ChapterWithProgressRelation(
     {
       path: 'app/src/main/java/com/example/interactivereader/core/database/seeder/DatabaseSeeder.kt',
       category: 'Core & Room DB',
-      description: 'Предзаполнение БД книгой «Приключения Шерлока Холмса» (2 главы и 6 вопросов)',
+      description: 'Предзаполнение БД книгой «Простые благодеяния» (Муфтий Мухаммад Таки Усмани, 12 частей и 36 вопросов)',
       content: `package com.example.interactivereader.core.database.seeder
 
 import androidx.room.RoomDatabase
@@ -535,7 +548,6 @@ import com.example.interactivereader.core.database.AppDatabase
 import com.example.interactivereader.core.database.entity.BookEntity
 import com.example.interactivereader.core.database.entity.ChapterEntity
 import com.example.interactivereader.core.database.entity.ChapterProgressEntity
-import com.example.interactivereader.core.database.entity.QuizQuestionEntity
 import com.example.interactivereader.core.domain.model.ChapterStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -570,33 +582,26 @@ class DatabaseSeeder @Inject constructor(
         database.withTransaction {
             val bookId = bookDao.insertBook(
                 BookEntity(
-                    id = 1L,
-                    title = "Приключения Шерлока Холмса",
-                    author = "Артур Конан Дойл",
-                    coverUrl = null,
-                    description = "Классический сборник детективных рассказов о великом лондонском сыщике Шерлоке Холмсе и докторе Джоне Ватсоне."
+                    id = 5L,
+                    title = ${JSON.stringify(EASY_GOOD_DEEDS_BOOK.title)},
+                    author = ${JSON.stringify(EASY_GOOD_DEEDS_BOOK.author)},
+                    coverUrl = ${JSON.stringify(EASY_GOOD_DEEDS_BOOK.coverUrl)},
+                    description = ${JSON.stringify(EASY_GOOD_DEEDS_BOOK.description)}
                 )
             )
 
             chapterDao.insertChapters(
                 listOf(
-                    ChapterEntity(1L, bookId, 0, "Глава 1. Скандал в Богемии", CHAPTER_1_TEXT),
-                    ChapterEntity(2L, bookId, 1, "Глава 2. Союз рыжих", CHAPTER_2_TEXT)
+                    ${chaptersKotlinList}
                 )
             )
 
             progressDao.upsertProgressList(
                 listOf(
-                    ChapterProgressEntity(bookId, 1L, ChapterStatus.AVAILABLE, 0, 0, now),
-                    ChapterProgressEntity(bookId, 2L, ChapterStatus.LOCKED, 0, 0, now)
+                    ${progressKotlinList}
                 )
             )
         }
-    }
-
-    companion object {
-        private val CHAPTER_1_TEXT = """${ch1Text}""".trimIndent()
-        private val CHAPTER_2_TEXT = """${ch2Text}""".trimIndent()
     }
 }
 `,
