@@ -59,7 +59,51 @@ const PASSING_SCORE_PERCENT = 75;
 
 interface StoredSettings {
   fontSizeSp: number;
+  arabicScaleFactor: number;
   theme: ReaderThemeId;
+}
+
+const ARABIC_WORD_WITH_TASHKEEL_REGEX =
+  /([\u0610-\u061A\u0620-\u065F\u066E-\u06D3\u06D5-\u06ED\u0640\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]+)/g;
+
+function isArabicParagraphLine(line: string): boolean {
+  const hasArabic = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(
+    line
+  );
+  if (!hasArabic) return false;
+  const hasCyrillicOrLatin = /[А-Яа-яЁёA-Za-z]/.test(line);
+  return !hasCyrillicOrLatin;
+}
+
+function renderMixedArabicFragment(
+  textFragment: string,
+  baseFontSizeSp: number,
+  arabicScaleFactor: number,
+  keyPrefix: string
+): React.ReactNode {
+  if (!textFragment || Math.abs(arabicScaleFactor - 1.0) < 0.001) {
+    return textFragment;
+  }
+  const parts = textFragment.split(ARABIC_WORD_WITH_TASHKEEL_REGEX);
+  if (parts.length === 1) {
+    return textFragment;
+  }
+  const scaledPx = Math.round(baseFontSizeSp * arabicScaleFactor * 10) / 10;
+  return parts.map((chunk, i) => {
+    if (i % 2 === 1) {
+      return (
+        <span
+          key={`${keyPrefix}-ar-${i}`}
+          style={{
+            fontSize: `${scaledPx}px`,
+          }}
+        >
+          {chunk}
+        </span>
+      );
+    }
+    return <React.Fragment key={`${keyPrefix}-tx-${i}`}>{chunk}</React.Fragment>;
+  });
 }
 
 function getInitialCatalogProgress(): Record<number, ChapterProgressRecord> {
@@ -94,6 +138,10 @@ function getInitialSettings(): StoredSettings {
       const parsed = JSON.parse(raw);
       return {
         fontSizeSp: Math.min(28, Math.max(14, Number(parsed.fontSizeSp) || 18)),
+        arabicScaleFactor: Math.min(
+          2.0,
+          Math.max(1.0, Number(parsed.arabicScaleFactor) || 1.35)
+        ),
         theme: parsed.theme in READER_THEMES ? parsed.theme : 'LIGHT',
       };
     }
@@ -102,6 +150,7 @@ function getInitialSettings(): StoredSettings {
   }
   return {
     fontSizeSp: 18,
+    arabicScaleFactor: 1.35,
     theme: 'LIGHT',
   };
 }
@@ -1201,50 +1250,73 @@ export default function App() {
                 <div
                   style={{
                     fontSize: `${settings.fontSizeSp}px`,
-                    lineHeight: 1.55,
+                    lineHeight: Math.max(1.55, settings.arabicScaleFactor * 1.38),
                   }}
-                  className="font-reader whitespace-pre-line tracking-normal my-auto"
+                  className="font-reader tracking-normal my-auto"
                 >
                   {currentPage?.text
-                    ? currentPage.text.split(/([¹²³⁴⁵⁶⁷⁸⁹⁰]+)/g).map((part, idx) => {
-                        const supMap: Record<string, string> = {
-                          '¹': '1',
-                          '²': '2',
-                          '³': '3',
-                          '⁴': '4',
-                          '⁵': '5',
-                          '⁶': '6',
-                          '⁷': '7',
-                          '⁸': '8',
-                          '⁹': '9',
-                          '⁰': '0',
-                        };
-                        if (/^[¹²³⁴⁵⁶⁷⁸⁹⁰]+$/.test(part)) {
-                          const fnId = part
-                            .split('')
-                            .map((c) => supMap[c] || c)
-                            .join('');
-                          const fnObj = currentReaderNormalizedDoc.footnotes.find(
-                            (f) => f.id === fnId
-                          );
-                          if (fnObj) {
-                            return (
-                              <button
-                                key={idx}
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setActiveFootnotePopup(fnObj);
-                                }}
-                                title={`Сноска ${fnId}: ${fnObj.anchor_text}`}
-                                className="inline-flex items-center justify-center px-1.5 py-0.5 mx-0.5 text-[11px] font-mono-tabular font-bold rounded bg-amber-500/20 text-amber-700 border border-amber-600/40 align-super hover:bg-amber-500/30 transition-colors cursor-pointer"
-                              >
-                                {part}
-                              </button>
-                            );
-                          }
+                    ? currentPage.text.split('\n').map((lineText, lineIdx) => {
+                        const isRtlLine = isArabicParagraphLine(lineText);
+                        if (!lineText.trim()) {
+                          return <div key={lineIdx} className="h-3" />;
                         }
-                        return <React.Fragment key={idx}>{part}</React.Fragment>;
+                        return (
+                          <div
+                            key={lineIdx}
+                            dir={isRtlLine ? 'rtl' : 'ltr'}
+                            className={isRtlLine ? 'text-right' : 'text-left'}
+                          >
+                            {lineText.split(/([¹²³⁴⁵⁶⁷⁸⁹⁰]+)/g).map((part, idx) => {
+                              const supMap: Record<string, string> = {
+                                '¹': '1',
+                                '²': '2',
+                                '³': '3',
+                                '⁴': '4',
+                                '⁵': '5',
+                                '⁶': '6',
+                                '⁷': '7',
+                                '⁸': '8',
+                                '⁹': '9',
+                                '⁰': '0',
+                              };
+                              if (/^[¹²³⁴⁵⁶⁷⁸⁹⁰]+$/.test(part)) {
+                                const fnId = part
+                                  .split('')
+                                  .map((c) => supMap[c] || c)
+                                  .join('');
+                                const fnObj = currentReaderNormalizedDoc.footnotes.find(
+                                  (f) => f.id === fnId
+                                );
+                                if (fnObj) {
+                                  return (
+                                    <button
+                                      key={idx}
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setActiveFootnotePopup(fnObj);
+                                      }}
+                                      title={`Сноска ${fnId}: ${fnObj.anchor_text}`}
+                                      className="inline-flex items-center justify-center px-1.5 py-0.5 mx-0.5 text-[11px] font-mono-tabular font-bold rounded bg-amber-500/20 text-amber-700 border border-amber-600/40 align-super hover:bg-amber-500/30 transition-colors cursor-pointer"
+                                    >
+                                      {part}
+                                    </button>
+                                  );
+                                }
+                              }
+                              return (
+                                <React.Fragment key={idx}>
+                                  {renderMixedArabicFragment(
+                                    part,
+                                    settings.fontSizeSp,
+                                    settings.arabicScaleFactor,
+                                    `p-${lineIdx}-${idx}`
+                                  )}
+                                </React.Fragment>
+                              );
+                            })}
+                          </div>
+                        );
                       })
                     : null}
                 </div>
@@ -1271,8 +1343,24 @@ export default function App() {
                         <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
-                    <div className="leading-relaxed whitespace-pre-line font-reader text-sm">
-                      {activeFootnotePopup.text}
+                    <div className="leading-relaxed font-reader text-sm space-y-1">
+                      {(activeFootnotePopup.text || '').split('\n').map((fnLine, fnIdx) => {
+                        const isRtlFn = isArabicParagraphLine(fnLine);
+                        return (
+                          <div
+                            key={fnIdx}
+                            dir={isRtlFn ? 'rtl' : 'ltr'}
+                            className={isRtlFn ? 'text-right' : 'text-left'}
+                          >
+                            {renderMixedArabicFragment(
+                              fnLine,
+                              14,
+                              settings.arabicScaleFactor,
+                              `fn-${fnIdx}`
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -1376,6 +1464,44 @@ export default function App() {
                         А+
                       </button>
                     </div>
+                  </div>
+
+                  <div className="space-y-2 pt-1">
+                    <div className="flex items-center justify-between text-xs font-medium">
+                      <span>
+                        Масштаб арабской вязи:{' '}
+                        <strong className="font-mono-tabular">
+                          {settings.arabicScaleFactor.toFixed(2)}x (
+                          {(settings.fontSizeSp * settings.arabicScaleFactor).toFixed(1)} sp)
+                        </strong>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSettings((s) => ({ ...s, arabicScaleFactor: 1.0 }))
+                        }
+                        className="px-2 py-0.5 rounded border border-current/20 text-[11px] font-mono-tabular hover:opacity-80"
+                      >
+                        Сброс 1.0x
+                      </button>
+                    </div>
+                    <input
+                      type="range"
+                      min={1.0}
+                      max={2.0}
+                      step={0.05}
+                      value={settings.arabicScaleFactor}
+                      onChange={(e) =>
+                        setSettings((s) => ({
+                          ...s,
+                          arabicScaleFactor: Math.min(
+                            2.0,
+                            Math.max(1.0, parseFloat(e.target.value) || 1.0)
+                          ),
+                        }))
+                      }
+                      className="w-full accent-amber-700 cursor-pointer"
+                    />
                   </div>
 
                   <div className="grid grid-cols-3 gap-3">

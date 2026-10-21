@@ -131,7 +131,7 @@ function buildStandaloneReaderHtml() {
   }
   .reader-text {
     font-family: Georgia, "Times New Roman", serif;
-    white-space: pre-line; line-height: 1.55;
+    line-height: 1.55;
     flex: 1; overflow-y: auto;
   }
   .reader-footer {
@@ -193,6 +193,7 @@ let state = {
   controlsVisible: true,
   settingsOpen: false,
   fontSize: 18,
+  arabicScale: 1.35,
   theme: "LIGHT",
   qIndex: 0,
   selectedOpt: null,
@@ -201,6 +202,60 @@ let state = {
   quizDone: false,
   progress: createDefaultProgress()
 };
+
+const ARABIC_WORD_TASHKEEL_RE = /(?:[\\u0610-\\u061A\\u0620-\\u065F\\u066E-\\u06D3\\u06D5-\\u06ED\\u0640\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF])+/g;
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function isArabicParagraphLine(line) {
+  const hasArabic = /[\\u0600-\\u06FF\\u0750-\\u077F\\u08A0-\\u08FF\\uFB50-\\uFDFF\\uFE70-\\uFEFF]/.test(line);
+  if (!hasArabic) return false;
+  const hasCyrOrLat = /[А-Яа-яЁёA-Za-z]/.test(line);
+  return !hasCyrOrLat;
+}
+
+function formatLineMixedArabicHtml(line, baseFontSize, arabicScale) {
+  if (!line) return "";
+  const scale = Number(arabicScale) || 1.0;
+  if (Math.abs(scale - 1.0) < 0.001) {
+    return escapeHtml(line);
+  }
+  const scaledPx = (baseFontSize * scale).toFixed(1);
+  let lastIdx = 0;
+  let out = "";
+  ARABIC_WORD_TASHKEEL_RE.lastIndex = 0;
+  let m;
+  while ((m = ARABIC_WORD_TASHKEEL_RE.exec(line)) !== null) {
+    if (m.index > lastIdx) {
+      out += escapeHtml(line.slice(lastIdx, m.index));
+    }
+    out += '<span style="font-size:' + scaledPx + 'px;">' + escapeHtml(m[0]) + '</span>';
+    lastIdx = m.index + m[0].length;
+  }
+  if (lastIdx === 0) return escapeHtml(line);
+  if (lastIdx < line.length) {
+    out += escapeHtml(line.slice(lastIdx));
+  }
+  return out;
+}
+
+function formatMixedArabicHtml(text, baseFontSize, arabicScale) {
+  if (!text) return "";
+  return String(text)
+    .split("\\n")
+    .map((line) => {
+      if (!line.trim()) return '<div style="height:10px"></div>';
+      const isRtl = isArabicParagraphLine(line);
+      const inner = formatLineMixedArabicHtml(line, baseFontSize, arabicScale);
+      return '<div dir="' + (isRtl ? 'rtl' : 'ltr') + '" style="text-align:' + (isRtl ? 'right' : 'left') + '">' + inner + '</div>';
+    })
+    .join("");
+}
 
 try {
   const saved = localStorage.getItem("ir_apk_two_books_v3");
@@ -339,6 +394,8 @@ function render() {
     const page = pages[state.pageIndex];
     const t = THEMES[state.theme];
     const isLast = state.pageIndex === pages.length - 1;
+    const arScale = Number(state.arabicScale) || 1.35;
+    const formattedPageHtml = formatMixedArabicHtml(page.text, state.fontSize, arScale);
 
     root.innerHTML = \`
       <div class="reader-screen" style="background:\${t.bg};color:\${t.fg}">
@@ -350,7 +407,7 @@ function render() {
           </div>
         \` : '<div style="height:12px"></div>'}
         <div class="reader-page-area" onclick="handleReaderTap(event, \${pages.length})">
-          <div class="reader-text" style="font-size:\${state.fontSize}px">\${page.text}</div>
+          <div class="reader-text" style="font-size:\${state.fontSize}px;line-height:\${Math.max(1.55, arScale * 1.38).toFixed(2)}">\${formattedPageHtml}</div>
           <div class="reader-footer" onclick="event.stopPropagation()">
             <div style="display:flex;gap:6px">
               <button class="btn btn-outline" style="padding:8px 12px;color:\${t.fg}" \${state.pageIndex === 0 ? 'disabled' : ''} onclick="turnPage(-1, \${pages.length})">←</button>
@@ -372,6 +429,13 @@ function render() {
                 <button class="btn btn-outline" style="color:\${t.fg}" onclick="changeFont(-2)">А-</button>
                 <button class="btn btn-outline" style="color:\${t.fg}" onclick="changeFont(2)">А+</button>
               </div>
+            </div>
+            <div style="margin-bottom:14px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-size:14px">
+                <span>Масштаб арабской вязи: <b>\${arScale.toFixed(2)}x (\${(state.fontSize * arScale).toFixed(1)} sp)</b></span>
+                <button class="btn btn-outline" style="padding:4px 8px;font-size:11px;color:\${t.fg}" onclick="changeArabicScale(1.0)">1.0x</button>
+              </div>
+              <input type="range" min="1.0" max="2.0" step="0.05" value="\${arScale}" style="width:100%" oninput="changeArabicScale(this.value)" />
             </div>
             <div style="display:flex;gap:8px">
               \${Object.keys(THEMES).map(k => \`
@@ -489,6 +553,7 @@ window.handleReaderTap = (e, totalPages) => {
 };
 window.toggleSettings = () => { state.settingsOpen = !state.settingsOpen; render(); };
 window.changeFont = (d) => { state.fontSize = Math.min(28, Math.max(14, state.fontSize + d)); render(); };
+window.changeArabicScale = (val) => { state.arabicScale = Math.min(2.0, Math.max(1.0, parseFloat(val) || 1.0)); render(); };
 window.setTheme = (t) => { state.theme = t; render(); };
 window.startQuiz = (id) => {
   state.chapterId = id; state.qIndex = 0; state.selectedOpt = null;

@@ -449,5 +449,446 @@ fun buildFootnoteAnnotatedString(rawText: String): AnnotatedString = buildAnnota
 }
 `,
   },
+  {
+    path: 'app/src/main/java/com/example/interactivereader/core/ui/text/ArabicTextScaler.kt',
+    category: 'Feature Reader',
+    description: 'Высокопроизводительное выборочное масштабирование арабской вязи и ташкиля [\\p{sc=Arabic}&&[\\p{L}\\p{M}]] с LRU-кешем и защитой метрик строки',
+    content: `package com.example.interactivereader.core.ui.text
+
+import android.util.LruCache
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDirection
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.isUnspecified
+import androidx.compose.ui.unit.sp
+import java.util.regex.Pattern
+import kotlin.math.abs
+import kotlin.math.max
+
+@Immutable
+data class ArabicSpanRange(
+    val startIndex: Int,
+    val endIndex: Int
+) {
+    init {
+        require(startIndex >= 0 && endIndex > startIndex) {
+            "Invalid range: [$startIndex, $endIndex)"
+        }
+    }
+}
+
+object ArabicTextScaler {
+
+    private const val SCALE_EPSILON = 0.001f
+    private const val MIN_SCALE_FACTOR = 0.5f
+    private const val MAX_SCALE_FACTOR = 3.0f
+    private const val RANGE_CACHE_MAX_ENTRIES = 256
+
+    private val ARABIC_PATTERN: Pattern = Pattern.compile(
+        "[\\\\p{sc=Arabic}&&[\\\\p{L}\\\\p{M}\\\\u0640]]+"
+    )
+
+    private val rangeCache = object : LruCache<String, List<ArabicSpanRange>>(RANGE_CACHE_MAX_ENTRIES) {}
+
+    fun formatMixedText(
+        text: String,
+        baseFontSize: TextUnit,
+        scaleFactor: Float
+    ): AnnotatedString {
+        if (text.isEmpty()) return AnnotatedString("")
+        if (baseFontSize.isUnspecified || !scaleFactor.isFinite() || scaleFactor <= 0f) {
+            return AnnotatedString(text)
+        }
+
+        val clampedScale = scaleFactor.coerceIn(MIN_SCALE_FACTOR, MAX_SCALE_FACTOR)
+        if (abs(clampedScale - 1.0f) < SCALE_EPSILON) {
+            return AnnotatedString(text)
+        }
+
+        if (!containsArabicCodeUnits(text)) {
+            return AnnotatedString(text)
+        }
+
+        val ranges = getOrComputeArabicRanges(text)
+        if (ranges.isEmpty()) {
+            return AnnotatedString(text)
+        }
+
+        val scaledArabicSpanStyle = SpanStyle(
+            fontSize = baseFontSize * clampedScale
+        )
+
+        return AnnotatedString.Builder(text).apply {
+            for (i in ranges.indices) {
+                val range = ranges[i]
+                addStyle(
+                    style = scaledArabicSpanStyle,
+                    start = range.startIndex,
+                    end = range.endIndex
+                )
+            }
+        }.toAnnotatedString()
+    }
+
+    fun getOrComputeArabicRanges(text: String): List<ArabicSpanRange> {
+        synchronized(rangeCache) {
+            rangeCache.get(text)?.let { return it }
+        }
+
+        val matcher = ARABIC_PATTERN.matcher(text)
+        var computedRanges: MutableList<ArabicSpanRange>? = null
+
+        while (matcher.find()) {
+            val start = matcher.start()
+            val end = matcher.end()
+            if (end > start) {
+                val list = computedRanges ?: ArrayList<ArabicSpanRange>(4).also {
+                    computedRanges = it
+                }
+                list.add(ArabicSpanRange(startIndex = start, endIndex = end))
+            }
+        }
+
+        val result = computedRanges ?: emptyList()
+        synchronized(rangeCache) {
+            rangeCache.put(text, result)
+        }
+        return result
+    }
+
+    private fun containsArabicCodeUnits(text: CharSequence): Boolean {
+        for (i in 0 until text.length) {
+            val code = text[i].code
+            if (
+                code in 0x0600..0x06FF ||
+                code in 0x0750..0x077F ||
+                code in 0x08A0..0x08FF ||
+                code in 0xFB50..0xFDFF ||
+                code in 0xFE70..0xFEFF ||
+                Character.isHighSurrogate(text[i])
+            ) {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+@Composable
+fun rememberScaledArabicText(
+    text: String,
+    baseFontSize: TextUnit,
+    scaleFactor: Float
+): AnnotatedString {
+    return remember(text, baseFontSize, scaleFactor) {
+        ArabicTextScaler.formatMixedText(
+            text = text,
+            baseFontSize = baseFontSize,
+            scaleFactor = scaleFactor
+        )
+    }
+}
+
+fun createMixedArabicTextStyle(
+    baseStyle: TextStyle,
+    baseFontSize: TextUnit = 18.sp,
+    arabicScaleFactor: Float = 1.35f,
+    hasArabicContent: Boolean = true
+): TextStyle {
+    val effectiveScale = if (hasArabicContent) {
+        arabicScaleFactor.coerceIn(1.0f, 2.5f)
+    } else {
+        1.0f
+    }
+
+    val dynamicLineHeightMultiplier = if (hasArabicContent && effectiveScale > 1.0f) {
+        max(1.55f, effectiveScale * 1.38f)
+    } else {
+        1.5f
+    }
+
+    return baseStyle.merge(
+        TextStyle(
+            fontSize = baseFontSize,
+            lineHeight = baseFontSize * dynamicLineHeightMultiplier,
+            textDirection = TextDirection.ContentOrLtr,
+            platformStyle = PlatformTextStyle(
+                includeFontPadding = false
+            ),
+            lineHeightStyle = LineHeightStyle(
+                alignment = LineHeightStyle.Alignment.Center,
+                trim = LineHeightStyle.Trim.None
+            )
+        )
+    )
+}
+
+@Composable
+fun MixedArabicText(
+    text: String,
+    modifier: Modifier = Modifier,
+    baseFontSize: TextUnit = 18.sp,
+    arabicScaleFactor: Float = 1.35f,
+    color: Color = Color.Unspecified,
+    fontWeight: FontWeight? = null,
+    fontFamily: FontFamily? = null,
+    textAlign: TextAlign? = null,
+    style: TextStyle = LocalTextStyle.current,
+    onTextLayout: (TextLayoutResult) -> Unit = {}
+) {
+    val annotatedText = rememberScaledArabicText(
+        text = text,
+        baseFontSize = baseFontSize,
+        scaleFactor = arabicScaleFactor
+    )
+
+    val hasArabicSpans = annotatedText.spanStyles.isNotEmpty()
+
+    val safeTextStyle = remember(style, baseFontSize, arabicScaleFactor, hasArabicSpans) {
+        createMixedArabicTextStyle(
+            baseStyle = style,
+            baseFontSize = baseFontSize,
+            arabicScaleFactor = arabicScaleFactor,
+            hasArabicContent = hasArabicSpans
+        )
+    }
+
+    Text(
+        text = annotatedText,
+        modifier = modifier,
+        color = color,
+        fontWeight = fontWeight,
+        fontFamily = fontFamily,
+        textAlign = textAlign,
+        style = safeTextStyle,
+        onTextLayout = onTextLayout
+    )
+}
+`,
+  },
+  {
+    path: 'app/src/main/java/com/example/interactivereader/feature_reader/presentation/ArabicTypographyDemoScreen.kt',
+    category: 'Feature Reader',
+    description: 'Демонстрационный экран масштабирования арабской вязи с ползунком scaleFactor (1.0f..2.0f) и LazyColumn',
+    content: `package com.example.interactivereader.feature_reader.presentation
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.interactivereader.core.ui.text.ArabicTextScaler
+import com.example.interactivereader.core.ui.text.MixedArabicText
+import java.util.Locale
+
+data class MixedSampleItem(
+    val id: Int,
+    val chapterTitle: String,
+    val mixedContent: String
+)
+
+private val DEMO_SAMPLES = listOf(
+    MixedSampleItem(
+        id = 1,
+        chapterTitle = "Глава 43. Чтение Корана (инлайн-вязь, европейские 0–9 и индо-арабские цифры ٠–٩)",
+        mixedContent = """Абдуллах ибн Мас’уд рассказывает, что наш Пророк ﷺ сказал: مَنْ قَرَأَ حَرْفًا مِنْ كِتَابِ اللَّهِ فَلَهُ بِهِ حَسَنَةٌ وَالْحَسَنَةُ بِعَشْرِ أَمْثَالِهَا لَا أَقُولُ الم حَرْفٌ وَلَكِنْ أَلِفٌ حَرْفٌ وَلَامٌ حَرْفٌ وَمِيمٌ حَرْفٌ — «Тому, кто прочтет (хотя бы 1 / ١) букву из Книги Аллаха, запишется 10 (١٠) добрых дел, а за три буквы “Алиф, Лям, Мим” — 30 (٣٠) наград» (Джами ат-Тирмизи, 2910 / ٢٩١٠)."""
+    ),
+    MixedSampleItem(
+        id = 2,
+        chapterTitle = "Глава 44. Чтение сур «Фатиха» и «Ихляс» (встроенный аят внутри кириллицы)",
+        mixedContent = """Пророк ﷺ сказал: «Читайте (قُلْ هُوَ اللَّهُ أَحَدٌ) (Куль Хува Аллаhу ахад), это равно 1/3 (١/٣) Корана» (Сахих Муслим, 811 б). Оригинал текста: إِنَّ اللَّهَ جَزَّأَ الْقُرْآنَ ثَلَاثَةَ أَجْزَاءٍ فَجَعَلَ قُلْ هُوَ اللَّهُ أَحَدٌ جُزْءًا مِنْ أَجْزَاءِ الْقُرْآنِ."""
+    ),
+    MixedSampleItem(
+        id = 3,
+        chapterTitle = "Глава 47. Зикр после омовения (высокая плотность шадды и огласовок)",
+        mixedContent = """Тот, кто после тщательного омовения прочтет: أَشْهَدُ أَنْ لَا إِلَهَ إِلَّا اللَّهُ وَحْدَهُ لَا شَرِيكَ لَهُ وَأَنَّ مُحَمَّدًا عَبْدُهُ وَرَسُولُهُ — перед ним распахнутся все 8 (٨) небесных врат Рая (Сахих Муслим)."""
+    ),
+    MixedSampleItem(
+        id = 4,
+        chapterTitle = "Граничный случай: абзац без арабских букв (Fast-path 0 аллокаций)",
+        mixedContent = """Этот абзац содержит только кириллицу, латиницу (Latin text), европейские цифры 12345 и индо-арабские цифры ٠١٢٣٤٥٦٧٨٩. При любом положении ползунка размер всех символов этого блока остается строго 18.sp."""
+    )
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ArabicTypographyDemoScreen(
+    modifier: Modifier = Modifier
+) {
+    var arabicScaleFactor by rememberSaveable { mutableFloatStateOf(1.35f) }
+    val baseFontSize = 18.sp
+
+    Scaffold(
+        modifier = modifier.fillMaxSize(),
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        text = "Масштабирование арабской вязи",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                },
+                actions = {
+                    TextButton(onClick = { arabicScaleFactor = 1.0f }) {
+                        Text("Сброс (1.0x)")
+                    }
+                }
+            )
+        }
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+        ) {
+            Surface(
+                tonalElevation = 2.dp,
+                shadowElevation = 2.dp,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Масштаб арабского шрифта (scaleFactor):",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = String.format(
+                                Locale.US,
+                                "%.2fx (%.1f sp)",
+                                arabicScaleFactor,
+                                baseFontSize.value * arabicScaleFactor
+                            ),
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Slider(
+                        value = arabicScaleFactor,
+                        onValueChange = { arabicScaleFactor = it },
+                        valueRange = 1.0f..2.0f,
+                        steps = 19,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Text(
+                        text = "Кириллица, латиница, цифры (0–9, ٠–٩) и пунктуация фиксированы на 18.sp.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                itemsIndexed(
+                    items = DEMO_SAMPLES,
+                    key = { _, item -> item.id }
+                ) { _, sample ->
+                    val spanCount = ArabicTextScaler.getOrComputeArabicRanges(sample.mixedContent).size
+
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = sample.chapterTitle,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    text = "Спанов: $spanCount",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            MixedArabicText(
+                                text = sample.mixedContent,
+                                baseFontSize = baseFontSize,
+                                arabicScaleFactor = arabicScaleFactor,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+`,
+  },
 ];
 
