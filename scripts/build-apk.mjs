@@ -127,12 +127,58 @@ function buildStandaloneReaderHtml() {
   }
   .reader-page-area {
     flex: 1; padding: 20px 22px; display: flex; flex-direction: column; justify-content: space-between;
-    overflow: hidden;
+    overflow: hidden; position: relative;
   }
   .reader-text {
     font-family: Georgia, "Times New Roman", serif;
     line-height: 1.55;
-    flex: 1; overflow-y: auto;
+    flex: 1; overflow-y: auto; padding-right: 6px;
+  }
+  ::-webkit-scrollbar { width: 12px; height: 12px; }
+  ::-webkit-scrollbar-track {
+    background: rgba(214, 208, 196, 0.05);
+    border-right: 4px solid transparent; border-left: 4px solid transparent;
+    background-clip: padding-box; border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: #06372C;
+    border-right: 4px solid transparent; border-left: 4px solid transparent;
+    background-clip: padding-box; border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:active {
+    background-color: #06372C;
+  }
+  input[type="range"] {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 6px; border-radius: 9999px;
+    background: rgba(6, 55, 44, 0.2); outline: none;
+    accent-color: #06372C;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 20px; height: 20px; border-radius: 9999px;
+    background: #06372C; border: 2px solid #FEF3C7;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.25); cursor: pointer;
+  }
+  .reader-v-scrollbar-track {
+    position: absolute; top: 14px; bottom: 68px; right: 4px; width: 4px;
+    background: rgba(214, 208, 196, 0.05); border-radius: 9999px; z-index: 25;
+    transition: opacity 0.25s ease;
+  }
+  .lib-v-scrollbar-track {
+    position: fixed; top: 62px; bottom: 10px; right: 4px; width: 4px;
+    background: rgba(214, 208, 196, 0.05); border-radius: 9999px; z-index: 35;
+    pointer-events: none; transition: opacity 0.25s ease;
+  }
+  .reader-v-scrollbar-thumb {
+    width: 4px; border-radius: 9999px; background: #06372C;
+    position: relative; opacity: 0.85;
+    transition: top 0.12s ease, height 0.12s ease, opacity 0.18s ease;
+  }
+  .reader-v-scrollbar-track:active .reader-v-scrollbar-thumb,
+  .reader-v-scrollbar-track.sb-active .reader-v-scrollbar-thumb,
+  .lib-v-scrollbar-track.sb-active .reader-v-scrollbar-thumb {
+    opacity: 1;
   }
   .reader-footer {
     padding-top: 12px; border-top: 1px solid rgba(128,128,128,0.2);
@@ -419,9 +465,7 @@ function render() {
           const passed = p.status === "PASSED";
           return \`
             <div class="card chapter-card">
-              <div class="meta-line">
-                \${passed ? 'Пройдено · Лучший результат: ' + p.bestScore + '%' : 'Доступно для чтения'}
-              </div>
+              \${passed ? '<div class="meta-line">Пройдено · Лучший результат: ' + p.bestScore + '%</div>' : ''}
               <div style="font-size:17px;font-weight:700;font-family:Georgia,serif;line-height:1.35">\${c.title}</div>
               <div style="font-size:12px;color:#475569">\${c.subtitle}</div>
               <div style="display:flex;gap:8px;margin-top:6px">
@@ -433,6 +477,9 @@ function render() {
             </div>
           \`;
         }).join('')}
+        <div id="libSbTrack" class="lib-v-scrollbar-track">
+          <div id="libSbThumb" class="reader-v-scrollbar-thumb" style="height:14%;top:0%"></div>
+        </div>
       </div>
     \`;
   } else if (state.screen === "reader") {
@@ -447,6 +494,10 @@ function render() {
     const formattedPageHtml = formatMixedArabicHtml(page.text, state.fontSize, arScale, ch.footnotes);
     const activeFn = state.activeFnId && ch.footnotes ? ch.footnotes.find(f => String(f.id) === String(state.activeFnId)) : null;
 
+    const totalP = Math.max(1, pages.length);
+    const thumbHPct = Math.max(12, Math.min(100, 100 / totalP));
+    const thumbTopPct = totalP > 1 ? (state.pageIndex / (totalP - 1)) * (100 - thumbHPct) : 0;
+
     root.innerHTML = \`
       <div class="reader-screen" style="background:\${t.bg};color:\${t.fg}">
         \${state.controlsVisible ? \`
@@ -457,6 +508,9 @@ function render() {
           </div>
         \` : '<div style="height:12px"></div>'}
         <div class="reader-page-area" onclick="handleReaderTap(event, \${pages.length})">
+          <div id="readerSbTrack" class="reader-v-scrollbar-track" onclick="onScrollbarTap(event, \${pages.length})" ontouchstart="onScrollbarTouch(event, \${pages.length})" ontouchmove="onScrollbarTouch(event, \${pages.length})">
+            <div class="reader-v-scrollbar-thumb" style="height:\${thumbHPct}%;top:\${thumbTopPct}%"></div>
+          </div>
           <div class="reader-text" style="font-size:\${state.fontSize}px;line-height:\${Math.max(1.55, arScale * 1.38).toFixed(2)}">\${formattedPageHtml}</div>
           \${activeFn ? \`
             <div class="fn-popup" style="background:\${t.surface};color:\${t.fg}" onclick="event.stopPropagation()">
@@ -647,6 +701,43 @@ window.turnPage = (delta, totalPages) => {
   state.activeFnId = null;
   render();
 };
+window.seekToY = (clientY, totalPages) => {
+  const track = document.getElementById("readerSbTrack");
+  if (!track || totalPages <= 1) return;
+  const rect = track.getBoundingClientRect();
+  const ratio = Math.min(1, Math.max(0, (clientY - rect.top) / Math.max(1, rect.height)));
+  const targetIdx = Math.round(ratio * (totalPages - 1));
+  if (targetIdx !== state.pageIndex) {
+    const ch = getActiveChapter();
+    const pages = paginate(ch.content, state.fontSize);
+    state.pageIndex = targetIdx;
+    state.charOffset = pages[state.pageIndex].start;
+    state.progress[state.chapterId].offset = state.charOffset;
+    state.activeFnId = null;
+    render();
+  }
+  const updatedTrack = document.getElementById("readerSbTrack");
+  if (updatedTrack) {
+    updatedTrack.classList.add("sb-active");
+    clearTimeout(window.__sbTimer);
+    window.__sbTimer = setTimeout(() => {
+      const t = document.getElementById("readerSbTrack");
+      if (t) t.classList.remove("sb-active");
+    }, 1200);
+  }
+};
+window.onScrollbarTap = (e, totalPages) => {
+  if (e) e.stopPropagation();
+  window.seekToY(e.clientY, totalPages);
+};
+window.onScrollbarTouch = (e, totalPages) => {
+  if (e) {
+    e.stopPropagation();
+    if (e.touches && e.touches[0]) {
+      window.seekToY(e.touches[0].clientY, totalPages);
+    }
+  }
+};
 window.handleReaderTap = (e, totalPages) => {
   if (state.settingsOpen) { window.toggleSettings(); return; }
   if (state.activeFnId) { window.closeFn(); return; }
@@ -754,6 +845,25 @@ try {
     pushHistoryLevel("quiz-" + state.chapterId);
   }
 } catch (e) {}
+
+window.addEventListener("scroll", () => {
+  if (state.screen !== "library") return;
+  const thumb = document.getElementById("libSbThumb");
+  const track = document.getElementById("libSbTrack");
+  if (!thumb || !track) return;
+  const docEl = document.documentElement;
+  const maxScroll = Math.max(1, docEl.scrollHeight - window.innerHeight);
+  const ratio = Math.min(1, Math.max(0, window.scrollY / maxScroll));
+  const thumbH = Math.max(8, Math.min(100, (window.innerHeight / Math.max(1, docEl.scrollHeight)) * 100));
+  thumb.style.height = thumbH.toFixed(1) + "%";
+  thumb.style.top = (ratio * (100 - thumbH)).toFixed(1) + "%";
+  track.classList.add("sb-active");
+  clearTimeout(window.__libSbTimer);
+  window.__libSbTimer = setTimeout(() => {
+    const t = document.getElementById("libSbTrack");
+    if (t) t.classList.remove("sb-active");
+  }, 1000);
+}, { passive: true });
 
 window.addEventListener("resize", () => { if (state.screen === "reader") render(); });
 render();

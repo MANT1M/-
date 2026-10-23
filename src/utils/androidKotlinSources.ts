@@ -1054,5 +1054,315 @@ fun AppNavHost(
 }
 `,
   },
+  {
+    path: 'app/src/main/java/com/example/interactivereader/feature_reader/presentation/components/VerticalReaderScrollbar.kt',
+    category: 'Feature Reader',
+    description: 'Минималистичная вертикальная полоса прокрутки (4dp ширина, 4dp отступ справа, капсула #06372C в цвет кнопки «Читать главу», дорожка 5%)',
+    content: `package com.example.interactivereader.feature_reader.presentation.components
+
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
+import kotlin.math.max
+
+/**
+ * Фирменная палитра скроллбара:
+ * - Бегунок (#06372C) — точный цвет кнопки «Читать главу»
+ * - Едва заметная светло-бежевая/серая дорожка с 5% непрозрачности (0x0DD6D0C4)
+ */
+private val ScrollbarThumbDarkGreen = Color(0xFF06372C)
+private val ScrollbarTrackSubtleBeige = Color(0x0DD6D0C4) // 5% alpha
+
+/**
+ * 1. Модификатор вертикального скроллбара для LazyColumn (список глав / карточек / блоков текста).
+ * Располагается справа с отступом 4.dp от края экрана, ширина капсулы — 4.dp.
+ */
+fun Modifier.drawVerticalScrollbar(
+    state: LazyListState,
+    thumbWidth: Dp = 4.dp,
+    endPadding: Dp = 4.dp,
+    minThumbLength: Dp = 36.dp,
+    thumbColor: Color = ScrollbarThumbDarkGreen,
+    trackColor: Color = ScrollbarTrackSubtleBeige
+): Modifier = composed {
+    var isRecentlyScrolled by remember { mutableStateOf(false) }
+    val isScrollInProgress = state.isScrollInProgress
+
+    LaunchedEffect(isScrollInProgress, state.firstVisibleItemIndex, state.firstVisibleItemScrollOffset) {
+        if (isScrollInProgress) {
+            isRecentlyScrolled = true
+        } else if (isRecentlyScrolled) {
+            delay(1200L)
+            isRecentlyScrolled = false
+        }
+    }
+
+    // При скролле/касании — высокая контрастность (0.92f), в покое — мягкая полупрозрачность (0.38f)
+    val thumbAlpha by animateFloatAsState(
+        targetValue = when {
+            isScrollInProgress -> 0.92f
+            isRecentlyScrolled -> 0.65f
+            else -> 0.35f
+        },
+        animationSpec = tween(
+            durationMillis = if (isScrollInProgress) 150 else 500,
+            easing = FastOutSlowInEasing
+        ),
+        label = "LazyScrollbarThumbAlpha"
+    )
+
+    val trackAlpha by animateFloatAsState(
+        targetValue = if (isScrollInProgress || isRecentlyScrolled) 1f else 0f,
+        animationSpec = tween(durationMillis = 300),
+        label = "LazyScrollbarTrackAlpha"
+    )
+
+    drawWithContent {
+        drawContent()
+
+        val layoutInfo = state.layoutInfo
+        val visibleItems = layoutInfo.visibleItemsInfo
+        val totalItemsCount = layoutInfo.totalItemsCount
+        if (totalItemsCount <= 0 || visibleItems.isEmpty()) return@drawWithContent
+
+        val viewportHeight = size.height
+        val avgItemSize = visibleItems.sumOf { it.size }.toFloat() / visibleItems.size.coerceAtLeast(1)
+        val estimatedTotalContentHeight = max(viewportHeight, avgItemSize * totalItemsCount)
+
+        if (estimatedTotalContentHeight <= viewportHeight + 1f) return@drawWithContent
+
+        val thumbWidthPx = thumbWidth.toPx()
+        val endPaddingPx = endPadding.toPx()
+        val cornerRadius = CornerRadius(thumbWidthPx / 2f, thumbWidthPx / 2f)
+        val xOffset = size.width - thumbWidthPx - endPaddingPx
+
+        // Дорожка (Track) — 5% непрозрачности
+        if (trackAlpha > 0.01f) {
+            drawRoundRect(
+                color = trackColor.copy(alpha = trackColor.alpha * trackAlpha),
+                topLeft = Offset(x = xOffset, y = 0f),
+                size = Size(width = thumbWidthPx, height = viewportHeight),
+                cornerRadius = cornerRadius
+            )
+        }
+
+        // Бегунок (Thumb) — капсула #0D3B2E шириной 4dp
+        val minThumbPx = minThumbLength.toPx()
+        val thumbHeightPx = (viewportHeight * (viewportHeight / estimatedTotalContentHeight))
+            .coerceIn(minThumbPx, viewportHeight)
+
+        val estimatedScrolledPx = state.firstVisibleItemIndex * avgItemSize + state.firstVisibleItemScrollOffset
+        val scrollFraction = (estimatedScrolledPx / (estimatedTotalContentHeight - viewportHeight)).coerceIn(0f, 1f)
+        val thumbOffsetY = scrollFraction * (viewportHeight - thumbHeightPx)
+
+        drawRoundRect(
+            color = thumbColor.copy(alpha = thumbAlpha),
+            topLeft = Offset(x = xOffset, y = thumbOffsetY),
+            size = Size(width = thumbWidthPx, height = thumbHeightPx),
+            cornerRadius = cornerRadius
+        )
+    }
+}
+
+/**
+ * 2. Модификатор вертикального скроллбара для вертикального ScrollState (Column.verticalScroll).
+ */
+fun Modifier.drawVerticalScrollbar(
+    scrollState: ScrollState,
+    thumbWidth: Dp = 4.dp,
+    endPadding: Dp = 4.dp,
+    minThumbLength: Dp = 36.dp,
+    thumbColor: Color = ScrollbarThumbDarkGreen,
+    trackColor: Color = ScrollbarTrackSubtleBeige
+): Modifier = composed {
+    val isScrollInProgress = scrollState.isScrollInProgress
+    var isRecentlyScrolled by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isScrollInProgress, scrollState.value) {
+        if (isScrollInProgress) {
+            isRecentlyScrolled = true
+        } else if (isRecentlyScrolled) {
+            delay(1200L)
+            isRecentlyScrolled = false
+        }
+    }
+
+    val thumbAlpha by animateFloatAsState(
+        targetValue = when {
+            isScrollInProgress -> 0.92f
+            isRecentlyScrolled -> 0.65f
+            else -> 0.35f
+        },
+        animationSpec = tween(durationMillis = if (isScrollInProgress) 150 else 500),
+        label = "ScrollStateThumbAlpha"
+    )
+
+    drawWithContent {
+        drawContent()
+        val maxScroll = scrollState.maxValue
+        if (maxScroll <= 0) return@drawWithContent
+
+        val viewportHeight = size.height
+        val totalContentHeight = viewportHeight + maxScroll
+        val thumbWidthPx = thumbWidth.toPx()
+        val endPaddingPx = endPadding.toPx()
+        val cornerRadius = CornerRadius(thumbWidthPx / 2f, thumbWidthPx / 2f)
+        val xOffset = size.width - thumbWidthPx - endPaddingPx
+
+        drawRoundRect(
+            color = trackColor,
+            topLeft = Offset(x = xOffset, y = 0f),
+            size = Size(width = thumbWidthPx, height = viewportHeight),
+            cornerRadius = cornerRadius
+        )
+
+        val thumbHeightPx = (viewportHeight * (viewportHeight / totalContentHeight))
+            .coerceIn(minThumbLength.toPx(), viewportHeight)
+        val scrollFraction = (scrollState.value.toFloat() / maxScroll.toFloat()).coerceIn(0f, 1f)
+        val thumbOffsetY = scrollFraction * (viewportHeight - thumbHeightPx)
+
+        drawRoundRect(
+            color = thumbColor.copy(alpha = thumbAlpha),
+            topLeft = Offset(x = xOffset, y = thumbOffsetY),
+            size = Size(width = thumbWidthPx, height = thumbHeightPx),
+            cornerRadius = cornerRadius
+        )
+    }
+}
+
+/**
+ * 3. Интерактивный компонент вертикального скроллбара для экрана чтения с поддержкой касания и перетаскивания.
+ * Повышает контрастность бегунка (#0D3B2E) при касании пальцем и позволяет быстро перемещаться по главе.
+ */
+@Composable
+fun VerticalReaderScrollbar(
+    progressFraction: Float,
+    visibleRatio: Float,
+    isScrolling: Boolean,
+    onSeekProgress: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+    thumbWidth: Dp = 4.dp,
+    endPadding: Dp = 4.dp,
+    minThumbLength: Dp = 36.dp,
+    thumbColor: Color = ScrollbarThumbDarkGreen,
+    trackColor: Color = ScrollbarTrackSubtleBeige
+) {
+    var isTouching by remember { mutableStateOf(false) }
+    var isRecentlyActive by remember { mutableStateOf(false) }
+    var trackHeightPx by remember { mutableFloatStateOf(1f) }
+
+    LaunchedEffect(isScrolling, progressFraction, isTouching) {
+        if (isScrolling || isTouching) {
+            isRecentlyActive = true
+        } else {
+            delay(1300L)
+            isRecentlyActive = false
+        }
+    }
+
+    val animatedThumbAlpha by animateFloatAsState(
+        targetValue = when {
+            isTouching -> 0.98f       // Максимальный контраст при касании
+            isScrolling -> 0.86f      // Яркий при активном скролле
+            isRecentlyActive -> 0.62f // Плавное затухание после скролла
+            else -> 0.36f             // Полупрозрачный в состоянии покоя
+        },
+        animationSpec = tween(durationMillis = if (isTouching || isScrolling) 120 else 450),
+        label = "InteractiveThumbAlpha"
+    )
+
+    val clampedProgress by remember(progressFraction) {
+        derivedStateOf { progressFraction.coerceIn(0f, 1f) }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxHeight()
+            .padding(end = endPadding) // Отступ 4dp от правого края экрана
+            .width(thumbWidth)         // Ширина капсулы 4dp
+            .onSizeChanged { trackHeightPx = max(1f, it.height.toFloat()) }
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onPress = { offset ->
+                        isTouching = true
+                        onSeekProgress((offset.y / trackHeightPx).coerceIn(0f, 1f))
+                        tryAwaitRelease()
+                        isTouching = false
+                    }
+                )
+            }
+            .pointerInput(Unit) {
+                detectVerticalDragGestures(
+                    onDragStart = { offset ->
+                        isTouching = true
+                        onSeekProgress((offset.y / trackHeightPx).coerceIn(0f, 1f))
+                    },
+                    onVerticalDrag = { change, _ ->
+                        change.consume()
+                        onSeekProgress((change.position.y / trackHeightPx).coerceIn(0f, 1f))
+                    },
+                    onDragEnd = { isTouching = false },
+                    onDragCancel = { isTouching = false }
+                )
+            }
+            .drawBehind {
+                val radius = CornerRadius(size.width / 2f, size.width / 2f)
+
+                // Фон (дорожка) — 5% непрозрачности
+                drawRoundRect(
+                    color = trackColor,
+                    topLeft = Offset.Zero,
+                    size = size,
+                    cornerRadius = radius
+                )
+
+                // Бегунок (активная капсула #0D3B2E)
+                val thumbHeight = (size.height * visibleRatio.coerceIn(0.08f, 1f))
+                    .coerceIn(minThumbLength.toPx(), size.height)
+                val availableTravel = (size.height - thumbHeight).coerceAtLeast(0f)
+                val thumbTopY = clampedProgress * availableTravel
+
+                drawRoundRect(
+                    color = thumbColor.copy(alpha = animatedThumbAlpha),
+                    topLeft = Offset(x = 0f, y = thumbTopY),
+                    size = Size(width = size.width, height = thumbHeight),
+                    cornerRadius = radius
+                )
+            },
+        contentAlignment = Alignment.TopEnd
+    ) {}
+}
+`,
+  },
 ];
 

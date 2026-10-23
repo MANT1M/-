@@ -553,12 +553,36 @@ export default function App() {
     setActiveSection('reader');
   };
 
+  const [isScrollbarActive, setIsScrollbarActive] = useState(false);
+  const [isScrollbarTouching, setIsScrollbarTouching] = useState(false);
+  const scrollbarTimeoutRef = useRef<number | null>(null);
+  const scrollbarTrackRef = useRef<HTMLDivElement | null>(null);
+
+  const triggerScrollbarVisibility = () => {
+    setIsScrollbarActive(true);
+    if (scrollbarTimeoutRef.current) {
+      window.clearTimeout(scrollbarTimeoutRef.current);
+    }
+    scrollbarTimeoutRef.current = window.setTimeout(() => {
+      setIsScrollbarActive(false);
+    }, 1400);
+  };
+
   const handlePageTurn = (targetIndex: number) => {
     if (pages.length === 0) return;
     const clamped = Math.min(Math.max(0, targetIndex), pages.length - 1);
     setCurrentPageIndex(clamped);
     const newOffset = getOffsetForPage(pages, clamped);
     setAnchorCharOffset(newOffset);
+    triggerScrollbarVisibility();
+  };
+
+  const handleScrollbarPointer = (clientY: number) => {
+    if (!scrollbarTrackRef.current || pages.length <= 1) return;
+    const rect = scrollbarTrackRef.current.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (clientY - rect.top) / Math.max(1, rect.height)));
+    const targetPage = Math.round(ratio * (pages.length - 1));
+    handlePageTurn(targetPage);
   };
 
   const handleReaderSurfaceClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -1139,15 +1163,15 @@ export default function App() {
                                   <div className="text-sm font-bold text-slate-900 truncate">
                                     {ch.title}
                                   </div>
-                                  <div className="text-xs text-stone-500 font-mono-tabular mt-0.5">
-                                    {isPassed
-                                      ? `Пройдено · Тест сдан на ${ch.score}% (${ch.quiz.length} вопроса)`
-                                      : isLocked
-                                      ? 'Заблокировано · Сначала пройдите предыдущую главу и тест'
-                                      : ch.lastCharOffset > 0
-                                      ? `Доступно · Продолжить чтение (смещение ${ch.lastCharOffset} симв.)`
-                                      : `Доступно для чтения · ${ch.quiz.length} вопроса в тесте`}
-                                  </div>
+                                  {(isPassed || isLocked || ch.lastCharOffset > 0) && (
+                                    <div className="text-xs text-stone-500 font-mono-tabular mt-0.5">
+                                      {isPassed
+                                        ? `Пройдено · Тест сдан на ${ch.score}% (${ch.quiz.length} вопроса)`
+                                        : isLocked
+                                        ? 'Заблокировано · Сначала пройдите предыдущую главу и тест'
+                                        : `Продолжить чтение (смещение ${ch.lastCharOffset} симв.)`}
+                                    </div>
+                                  )}
                                 </div>
                               </div>
 
@@ -1232,14 +1256,69 @@ export default function App() {
 
               <div
                 onClick={handleReaderSurfaceClick}
+                onWheel={() => triggerScrollbarVisibility()}
+                onTouchMove={() => triggerScrollbarVisibility()}
                 className="flex-1 px-6 sm:px-10 py-6 flex flex-col justify-between cursor-pointer relative"
               >
+                {/* Вертикальная полоса прокрутки (4dp ширина, 4dp отступ от правого края, капсула #0D3B2E, дорожка 5%) */}
+                <div
+                  ref={scrollbarTrackRef}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleScrollbarPointer(e.clientY);
+                  }}
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    setIsScrollbarTouching(true);
+                    triggerScrollbarVisibility();
+                    handleScrollbarPointer(e.clientY);
+                  }}
+                  onPointerMove={(e) => {
+                    if (isScrollbarTouching) {
+                      e.stopPropagation();
+                      triggerScrollbarVisibility();
+                      handleScrollbarPointer(e.clientY);
+                    }
+                  }}
+                  onPointerUp={(e) => {
+                    e.stopPropagation();
+                    setIsScrollbarTouching(false);
+                  }}
+                  onPointerLeave={() => setIsScrollbarTouching(false)}
+                  style={{
+                    right: '4px',
+                    width: '4px',
+                    backgroundColor: 'rgba(214, 208, 196, 0.05)',
+                    opacity: isScrollbarTouching ? 1 : isScrollbarActive ? 0.96 : 0.78,
+                  }}
+                  className="absolute top-4 bottom-20 rounded-full z-20 transition-opacity duration-300 select-none"
+                  title={`Прогресс главы: стр. ${currentPageIndex + 1} из ${pages.length}`}
+                >
+                  {(() => {
+                    const total = Math.max(1, pages.length);
+                    const thumbHeightPct = Math.max(12, Math.min(100, 100 / total));
+                    const maxTopPct = 100 - thumbHeightPct;
+                    const topPct =
+                      total > 1 ? (currentPageIndex / (total - 1)) * maxTopPct : 0;
+                    return (
+                      <div
+                        style={{
+                          height: `${thumbHeightPct}%`,
+                          top: `${topPct}%`,
+                          backgroundColor: '#06372C',
+                        }}
+                        className="w-full rounded-full relative transition-all duration-200 hover:opacity-100"
+                      />
+                    );
+                  })()}
+                </div>
+
                 <div
                   style={{
                     fontSize: `${settings.fontSizeSp}px`,
                     lineHeight: Math.max(1.55, settings.arabicScaleFactor * 1.38),
                   }}
-                  className="font-reader tracking-normal my-auto"
+                  className="font-reader tracking-normal my-auto pr-2"
                 >
                   {currentPage?.text
                     ? currentPage.text.split('\n').map((lineText, lineIdx) => {
@@ -1504,7 +1583,7 @@ export default function App() {
                           ),
                         }))
                       }
-                      className="w-full accent-amber-700 cursor-pointer"
+                      className="w-full accent-[#06372C] cursor-pointer"
                     />
                   </div>
 
@@ -1956,15 +2035,15 @@ export default function App() {
 
                       <div className="min-w-0">
                         <div className="text-sm font-bold text-slate-900 truncate">{ch.title}</div>
-                        <div className="text-xs text-stone-500 font-mono-tabular mt-0.5">
-                          {isPassed
-                            ? `Пройдено · Тест сдан на ${ch.score}%`
-                            : isLocked
-                            ? 'Заблокировано · Сначала пройдите предыдущую главу и тест'
-                            : ch.lastCharOffset > 0
-                            ? `Доступно · Смещение ${ch.lastCharOffset} симв.`
-                            : 'Доступно для чтения'}
-                        </div>
+                        {(isPassed || isLocked || ch.lastCharOffset > 0) && (
+                          <div className="text-xs text-stone-500 font-mono-tabular mt-0.5">
+                            {isPassed
+                              ? `Пройдено · Тест сдан на ${ch.score}%`
+                              : isLocked
+                              ? 'Заблокировано · Сначала пройдите предыдущую главу и тест'
+                              : `Продолжить чтение (смещение ${ch.lastCharOffset} симв.)`}
+                          </div>
+                        )}
                       </div>
                     </div>
 
