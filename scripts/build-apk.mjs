@@ -18,7 +18,6 @@ function loadBookFromTsFile(relPath, exportName) {
 function buildStandaloneReaderHtml() {
   const rawBooks = [
     loadBookFromTsFile('src/data/easyGoodDeedsData.ts', 'EASY_GOOD_DEEDS_BOOK'),
-    loadBookFromTsFile('src/data/islamicPsychologyData.ts', 'ISLAMIC_PSYCHOLOGY_BOOK'),
   ];
 
   const booksPayload = rawBooks.map((book) => ({
@@ -38,6 +37,7 @@ function buildStandaloneReaderHtml() {
       title: ch.title,
       subtitle: `Часть ${ch.chapterOrder} из ${book.chapters.length} · Проверочных вопросов: ${ch.quiz.length}`,
       content: ch.content,
+      footnotes: ch.footnotes || [],
       questions: ch.quiz.map((q) => ({
         q: q.question,
         opts: q.options,
@@ -54,7 +54,7 @@ function buildStandaloneReaderHtml() {
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-<title>Интерактивная Читалка — Библиотека с тестами</title>
+<title>Простые благодеяния — Интерактивная Читалка</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
@@ -144,6 +144,17 @@ function buildStandaloneReaderHtml() {
     box-shadow: 0 -8px 24px rgba(0,0,0,0.25);
     border-top: 1px solid rgba(128,128,128,0.25);
   }
+  .fn-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 1px 5px; margin: 0 2px; font-size: 11px; font-family: monospace; font-weight: 700;
+    border-radius: 5px; background: rgba(245, 158, 11, 0.22); color: #B45309;
+    border: 1px solid rgba(180, 83, 9, 0.4); vertical-align: super; cursor: pointer;
+  }
+  .fn-popup {
+    margin-top: 10px; padding: 12px 14px; border-radius: 12px;
+    border: 1px solid rgba(180, 83, 9, 0.35); font-size: 13px; line-height: 1.45;
+    max-height: 36vh; overflow-y: auto;
+  }
   .option-btn {
     width: 100%; text-align: left; padding: 14px 16px; border-radius: 12px;
     border: 2px solid #E2E8F0; background: #F8FAFC; color: #0F172A;
@@ -172,9 +183,9 @@ const THEMES = {
 function createDefaultProgress() {
   const prog = {};
   BOOKS.forEach((b) => {
-    b.chapters.forEach((c, idx) => {
+    b.chapters.forEach((c) => {
       prog[c.id] = {
-        status: idx === 0 ? "AVAILABLE" : "LOCKED",
+        status: "AVAILABLE",
         offset: 0,
         bestScore: 0
       };
@@ -192,6 +203,7 @@ let state = {
   charOffset: 0,
   controlsVisible: true,
   settingsOpen: false,
+  activeFnId: null,
   fontSize: 18,
   arabicScale: 1.35,
   theme: "LIGHT",
@@ -219,39 +231,69 @@ function isArabicParagraphLine(line) {
   return !hasCyrOrLat;
 }
 
-function formatLineMixedArabicHtml(line, baseFontSize, arabicScale) {
-  if (!line) return "";
+function formatArabicInChunk(chunk, baseFontSize, arabicScale) {
+  if (!chunk) return "";
   const scale = Number(arabicScale) || 1.0;
   if (Math.abs(scale - 1.0) < 0.001) {
-    return escapeHtml(line);
+    return escapeHtml(chunk);
   }
   const scaledPx = (baseFontSize * scale).toFixed(1);
   let lastIdx = 0;
   let out = "";
   ARABIC_WORD_TASHKEEL_RE.lastIndex = 0;
   let m;
-  while ((m = ARABIC_WORD_TASHKEEL_RE.exec(line)) !== null) {
+  while ((m = ARABIC_WORD_TASHKEEL_RE.exec(chunk)) !== null) {
     if (m.index > lastIdx) {
-      out += escapeHtml(line.slice(lastIdx, m.index));
+      out += escapeHtml(chunk.slice(lastIdx, m.index));
     }
     out += '<span style="font-size:' + scaledPx + 'px;">' + escapeHtml(m[0]) + '</span>';
     lastIdx = m.index + m[0].length;
   }
-  if (lastIdx === 0) return escapeHtml(line);
-  if (lastIdx < line.length) {
-    out += escapeHtml(line.slice(lastIdx));
+  if (lastIdx === 0) return escapeHtml(chunk);
+  if (lastIdx < chunk.length) {
+    out += escapeHtml(chunk.slice(lastIdx));
   }
   return out;
 }
 
-function formatMixedArabicHtml(text, baseFontSize, arabicScale) {
+function formatLineMixedArabicHtml(line, baseFontSize, arabicScale, footnotes) {
+  if (!line) return "";
+  const fnList = footnotes || [];
+  if (!fnList.length) {
+    return formatArabicInChunk(line, baseFontSize, arabicScale);
+  }
+  const fnRe = /\\[(\\d+)\\]/g;
+  let lastIdx = 0;
+  let out = "";
+  let m;
+  while ((m = fnRe.exec(line)) !== null) {
+    if (m.index > lastIdx) {
+      out += formatArabicInChunk(line.slice(lastIdx, m.index), baseFontSize, arabicScale);
+    }
+    const fnNum = m[1];
+    const hasFn = fnList.some(f => String(f.id) === String(fnNum));
+    if (hasFn) {
+      out += '<button type="button" class="fn-badge" onclick="openFn(event, \\'' + fnNum + '\\')">[' + fnNum + ']</button>';
+    } else {
+      out += escapeHtml(m[0]);
+    }
+    lastIdx = m.index + m[0].length;
+  }
+  if (lastIdx === 0) return formatArabicInChunk(line, baseFontSize, arabicScale);
+  if (lastIdx < line.length) {
+    out += formatArabicInChunk(line.slice(lastIdx), baseFontSize, arabicScale);
+  }
+  return out;
+}
+
+function formatMixedArabicHtml(text, baseFontSize, arabicScale, footnotes) {
   if (!text) return "";
   return String(text)
     .split("\\n")
     .map((line) => {
       if (!line.trim()) return '<div style="height:10px"></div>';
       const isRtl = isArabicParagraphLine(line);
-      const inner = formatLineMixedArabicHtml(line, baseFontSize, arabicScale);
+      const inner = formatLineMixedArabicHtml(line, baseFontSize, arabicScale, footnotes);
       return '<div dir="' + (isRtl ? 'rtl' : 'ltr') + '" style="text-align:' + (isRtl ? 'right' : 'left') + '">' + inner + '</div>';
     })
     .join("");
@@ -261,8 +303,14 @@ try {
   const saved = localStorage.getItem("ir_apk_two_books_v3");
   if (saved) {
     const parsed = JSON.parse(saved);
+    const mergedProgress = Object.assign(createDefaultProgress(), parsed.progress || {});
+    Object.keys(mergedProgress).forEach((k) => {
+      if (mergedProgress[k] && mergedProgress[k].status === "LOCKED") {
+        mergedProgress[k].status = "AVAILABLE";
+      }
+    });
     state = Object.assign(state, parsed, {
-      progress: Object.assign(createDefaultProgress(), parsed.progress || {})
+      progress: mergedProgress
     });
   }
 } catch (e) {}
@@ -331,11 +379,12 @@ function render() {
       <div class="top-bar" style="background:\${book.bg}">
         <div style="display:flex;align-items:center;gap:10px">
           <img src="data:image/svg+xml;base64,${fs.readFileSync(path.resolve(process.cwd(), 'public/icon.svg')).toString('base64')}" style="width:30px;height:30px;border-radius:7px;flex-shrink:0" alt="Иконка" />
-          <h1>Библиотека (2 книги)</h1>
+          <h1>\${book.title}</h1>
         </div>
         <span style="font-size:12px;opacity:0.85">\${passedCount}/\${book.chapters.length} глав</span>
       </div>
       <div class="container">
+        \${BOOKS.length > 1 ? \`
         <div class="book-tabs">
           \${BOOKS.map(b => \`
             <button class="book-tab \${b.id === book.id ? 'book-tab-active' : ''}" style="\${b.id === book.id ? 'background:' + b.bg + ';border-color:' + b.bg : ''}" onclick="selectBook(\${b.id})">
@@ -344,6 +393,7 @@ function render() {
             </button>
           \`).join('')}
         </div>
+        \` : ''}
 
         <div class="book-header" style="background:\${book.bg}">
           <div style="font-size:11px;letter-spacing:0.6px;margin-bottom:6px;opacity:0.85">\${book.author.toUpperCase()} · \${book.year}</div>
@@ -365,21 +415,20 @@ function render() {
         />
 
         \${visibleChapters.map(c => {
-          const p = state.progress[c.id] || { status: "LOCKED", offset: 0, bestScore: 0 };
-          const locked = p.status === "LOCKED";
+          const p = state.progress[c.id] || { status: "AVAILABLE", offset: 0, bestScore: 0 };
           const passed = p.status === "PASSED";
           return \`
-            <div class="card chapter-card \${locked ? 'chapter-locked' : ''}">
+            <div class="card chapter-card">
               <div class="meta-line">
-                \${passed ? 'Пройдено · Лучший результат: ' + p.bestScore + '%' : locked ? 'Заблокировано (сдайте предыдущий тест на ≥ 75%)' : 'Доступно для чтения'}
+                \${passed ? 'Пройдено · Лучший результат: ' + p.bestScore + '%' : 'Доступно для чтения'}
               </div>
               <div style="font-size:17px;font-weight:700;font-family:Georgia,serif;line-height:1.35">\${c.title}</div>
               <div style="font-size:12px;color:#475569">\${c.subtitle}</div>
               <div style="display:flex;gap:8px;margin-top:6px">
-                <button class="btn btn-primary" style="flex:1;background:\${book.bg}" \${locked ? 'disabled' : ''} onclick="openChapter(\${c.id})">
-                  \${locked ? 'Заблокировано' : p.offset > 0 ? 'Продолжить чтение' : 'Читать главу'}
+                <button class="btn btn-primary" style="flex:1;background:\${book.bg}" onclick="openChapter(\${c.id})">
+                  \${p.offset > 0 ? 'Продолжить чтение' : 'Читать главу'}
                 </button>
-                \${!locked ? \`<button class="btn btn-outline" onclick="startQuiz(\${c.id})">Тест</button>\` : ''}
+                <button class="btn btn-outline" onclick="startQuiz(\${c.id})">Тест</button>
               </div>
             </div>
           \`;
@@ -395,19 +444,29 @@ function render() {
     const t = THEMES[state.theme];
     const isLast = state.pageIndex === pages.length - 1;
     const arScale = Number(state.arabicScale) || 1.35;
-    const formattedPageHtml = formatMixedArabicHtml(page.text, state.fontSize, arScale);
+    const formattedPageHtml = formatMixedArabicHtml(page.text, state.fontSize, arScale, ch.footnotes);
+    const activeFn = state.activeFnId && ch.footnotes ? ch.footnotes.find(f => String(f.id) === String(state.activeFnId)) : null;
 
     root.innerHTML = \`
       <div class="reader-screen" style="background:\${t.bg};color:\${t.fg}">
         \${state.controlsVisible ? \`
           <div class="reader-hud-top" style="background:\${t.surface}">
-            <button class="btn btn-outline" style="padding:8px 12px;color:\${t.fg}" onclick="goLibrary()">← Книги</button>
+            <button class="btn btn-outline" style="padding:8px 12px;color:\${t.fg}" onclick="goLibrary()">← Оглавление</button>
             <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55%">\${ch.title}</div>
             <button class="btn btn-outline" style="padding:8px 12px;color:\${t.fg}" onclick="toggleSettings()">Аа</button>
           </div>
         \` : '<div style="height:12px"></div>'}
         <div class="reader-page-area" onclick="handleReaderTap(event, \${pages.length})">
           <div class="reader-text" style="font-size:\${state.fontSize}px;line-height:\${Math.max(1.55, arScale * 1.38).toFixed(2)}">\${formattedPageHtml}</div>
+          \${activeFn ? \`
+            <div class="fn-popup" style="background:\${t.surface};color:\${t.fg}" onclick="event.stopPropagation()">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-size:12px">
+                <strong style="color:#B45309">Сноска [\${activeFn.id}]</strong>
+                <button class="btn btn-outline" style="padding:2px 8px;font-size:11px;color:\${t.fg}" onclick="closeFn()">Закрыть</button>
+              </div>
+              <div>\${formatMixedArabicHtml(activeFn.text, 14, arScale, [])}</div>
+            </div>
+          \` : ''}
           <div class="reader-footer" onclick="event.stopPropagation()">
             <div style="display:flex;gap:6px">
               <button class="btn btn-outline" style="padding:8px 12px;color:\${t.fg}" \${state.pageIndex === 0 ? 'disabled' : ''} onclick="turnPage(-1, \${pages.length})">←</button>
@@ -506,6 +565,12 @@ function render() {
   }
 }
 
+function pushHistoryLevel(tag) {
+  try {
+    history.pushState({ tag: tag, ts: Date.now() }, "", "#" + tag);
+  } catch (e) {}
+}
+
 window.selectBook = (bookId) => {
   state.bookId = bookId;
   const b = getActiveBook();
@@ -513,7 +578,11 @@ window.selectBook = (bookId) => {
   render();
 };
 window.onSearchInput = (val) => {
+  const wasEmpty = !state.searchQuery;
   state.searchQuery = val;
+  if (wasEmpty && val) {
+    pushHistoryLevel("search");
+  }
   render();
   const input = document.getElementById("searchBox");
   if (input) {
@@ -521,13 +590,52 @@ window.onSearchInput = (val) => {
     input.setSelectionRange(input.value.length, input.value.length);
   }
 };
-window.goLibrary = () => { state.screen = "library"; render(); };
+window.goLibrary = () => {
+  state.settingsOpen = false;
+  state.activeFnId = null;
+  if (state.screen !== "library") {
+    state.screen = "library";
+    render();
+    if (window.location.hash && window.location.hash !== "#library") {
+      try { history.back(); } catch (e) {}
+    }
+  } else {
+    render();
+  }
+};
 window.openChapter = (id) => {
+  const fromLibrary = state.screen === "library";
   state.chapterId = id;
   state.charOffset = (state.progress[id] && state.progress[id].offset) || 0;
   state.settingsOpen = false;
+  state.activeFnId = null;
   state.screen = "reader";
+  if (fromLibrary) {
+    pushHistoryLevel("reader-" + id);
+  }
   render();
+};
+window.openFn = (e, fnId) => {
+  if (e) e.stopPropagation();
+  if (String(state.activeFnId) === String(fnId)) {
+    window.closeFn();
+    return;
+  }
+  const wasNull = !state.activeFnId;
+  state.activeFnId = String(fnId);
+  if (wasNull) {
+    pushHistoryLevel("fn-" + fnId);
+  }
+  render();
+};
+window.closeFn = () => {
+  if (state.activeFnId) {
+    state.activeFnId = null;
+    render();
+    if (window.location.hash.indexOf("#fn-") === 0) {
+      try { history.back(); } catch (e) {}
+    }
+  }
 };
 window.turnPage = (delta, totalPages) => {
   const ch = getActiveChapter();
@@ -536,10 +644,12 @@ window.turnPage = (delta, totalPages) => {
   state.pageIndex = nextIdx;
   state.charOffset = pages[state.pageIndex].start;
   state.progress[state.chapterId].offset = state.charOffset;
+  state.activeFnId = null;
   render();
 };
 window.handleReaderTap = (e, totalPages) => {
-  if (state.settingsOpen) { state.settingsOpen = false; render(); return; }
+  if (state.settingsOpen) { window.toggleSettings(); return; }
+  if (state.activeFnId) { window.closeFn(); return; }
   const x = e.clientX;
   const w = window.innerWidth;
   if (x < w * 0.25) {
@@ -551,14 +661,32 @@ window.handleReaderTap = (e, totalPages) => {
     render();
   }
 };
-window.toggleSettings = () => { state.settingsOpen = !state.settingsOpen; render(); };
+window.toggleSettings = () => {
+  if (!state.settingsOpen) {
+    state.settingsOpen = true;
+    pushHistoryLevel("settings");
+    render();
+  } else {
+    state.settingsOpen = false;
+    render();
+    if (window.location.hash === "#settings") {
+      try { history.back(); } catch (e) {}
+    }
+  }
+};
 window.changeFont = (d) => { state.fontSize = Math.min(28, Math.max(14, state.fontSize + d)); render(); };
 window.changeArabicScale = (val) => { state.arabicScale = Math.min(2.0, Math.max(1.0, parseFloat(val) || 1.0)); render(); };
 window.setTheme = (t) => { state.theme = t; render(); };
 window.startQuiz = (id) => {
+  const fromOther = state.screen !== "quiz";
   state.chapterId = id; state.qIndex = 0; state.selectedOpt = null;
   state.submitted = false; state.correctCount = 0; state.quizDone = false;
-  state.screen = "quiz"; render();
+  state.settingsOpen = false; state.activeFnId = null;
+  state.screen = "quiz";
+  if (fromOther) {
+    pushHistoryLevel("quiz-" + id);
+  }
+  render();
 };
 window.selectOpt = (i) => { if (!state.submitted) { state.selectedOpt = i; render(); } };
 window.submitAns = () => {
@@ -586,6 +714,47 @@ window.nextQ = () => {
   }
   render();
 };
+
+// Перехват системного жеста «Назад» (WebView.goBack() -> popstate)
+window.addEventListener("popstate", () => {
+  if (state.activeFnId !== null) {
+    state.activeFnId = null;
+    render();
+    return;
+  }
+  if (state.settingsOpen) {
+    state.settingsOpen = false;
+    render();
+    return;
+  }
+  if (state.screen === "quiz") {
+    state.screen = "reader";
+    render();
+    return;
+  }
+  if (state.screen === "reader") {
+    state.screen = "library";
+    render();
+    return;
+  }
+  if (state.searchQuery) {
+    state.searchQuery = "";
+    render();
+    return;
+  }
+});
+
+// Инициализация базового стека при запуске
+try {
+  history.replaceState({ tag: "library" }, "", "#library");
+  if (state.screen === "reader") {
+    pushHistoryLevel("reader-" + state.chapterId);
+  } else if (state.screen === "quiz") {
+    pushHistoryLevel("reader-" + state.chapterId);
+    pushHistoryLevel("quiz-" + state.chapterId);
+  }
+} catch (e) {}
+
 window.addEventListener("resize", () => { if (state.screen === "reader") render(); });
 render();
 </script>
@@ -1038,13 +1207,17 @@ function buildClassesDexWithShorties() {
     'VL',                                               // 11
     'VZ',                                               // 12
     'Z',                                                // 13
-    'file:///android_asset/index.html',                 // 14
-    'getSettings',                                      // 15
-    'loadUrl',                                          // 16
-    'onCreate',                                         // 17
-    'setContentView',                                   // 18
-    'setDomStorageEnabled',                             // 19
-    'setJavaScriptEnabled',                             // 20
+    'canGoBack',                                        // 14
+    'file:///android_asset/index.html',                 // 15
+    'getSettings',                                      // 16
+    'goBack',                                           // 17
+    'loadUrl',                                          // 18
+    'onBackPressed',                                    // 19
+    'onCreate',                                         // 20
+    'setContentView',                                   // 21
+    'setDomStorageEnabled',                             // 22
+    'setJavaScriptEnabled',                             // 23
+    'webView',                                          // 24
   ];
 
   // Verify strict lexicographical sort
@@ -1075,6 +1248,7 @@ function buildClassesDexWithShorties() {
   // 4: (Landroid/view/View;)V          | shorty=11 ('VL'), return=8, params=[3]
   // 5: (Ljava/lang/String;)V           | shorty=11 ('VL'), return=8, params=[7]
   // 6: (Z)V                            | shorty=12 ('VZ'), return=8, params=[9]
+  // 7: ()Z                             | shorty=13 ('Z'), return=9, params=0
   const protos = [
     { shortyIdx: 1, returnTypeIdx: 4, paramTypeIdx: null },
     { shortyIdx: 10, returnTypeIdx: 8, paramTypeIdx: null },
@@ -1083,30 +1257,45 @@ function buildClassesDexWithShorties() {
     { shortyIdx: 11, returnTypeIdx: 8, paramTypeIdx: 3 },
     { shortyIdx: 11, returnTypeIdx: 8, paramTypeIdx: 7 },
     { shortyIdx: 12, returnTypeIdx: 8, paramTypeIdx: 9 },
+    { shortyIdx: 13, returnTypeIdx: 9, paramTypeIdx: null },
+  ];
+
+  // Field IDs:
+  // 0: Lcom/example/interactivereader/MainActivity;.webView:Landroid/webkit/WebView; (class=6, type=5, name=24)
+  const fields = [
+    { classIdx: 6, typeIdx: 5, nameIdx: 24 },
   ];
 
   // Method IDs (sorted by class_idx, then name_idx, then proto_idx):
-  // 0: Landroid/app/Activity;.<init>:()V                              (class=0, name=0, proto=1)
-  // 1: Landroid/app/Activity;.onCreate:(Landroid/os/Bundle;)V         (class=0, name=17, proto=3)
-  // 2: Landroid/app/Activity;.setContentView:(Landroid/view/View;)V   (class=0, name=18, proto=4)
-  // 3: Landroid/webkit/WebSettings;.setDomStorageEnabled:(Z)V         (class=4, name=19, proto=6)
-  // 4: Landroid/webkit/WebSettings;.setJavaScriptEnabled:(Z)V         (class=4, name=20, proto=6)
-  // 5: Landroid/webkit/WebView;.<init>:(Landroid/content/Context;)V   (class=5, name=0, proto=2)
-  // 6: Landroid/webkit/WebView;.getSettings:()Landroid/webkit/WebSettings; (class=5, name=15, proto=0)
-  // 7: Landroid/webkit/WebView;.loadUrl:(Ljava/lang/String;)V         (class=5, name=16, proto=5)
-  // 8: Lcom/example/interactivereader/MainActivity;.<init>:()V        (class=6, name=0, proto=1)
-  // 9: Lcom/example/interactivereader/MainActivity;.onCreate:(Landroid/os/Bundle;)V (class=6, name=17, proto=3)
+  // 0: Landroid/app/Activity;.<init>:()V                                     (class=0, name=0, proto=1)
+  // 1: Landroid/app/Activity;.onBackPressed:()V                              (class=0, name=19, proto=1)
+  // 2: Landroid/app/Activity;.onCreate:(Landroid/os/Bundle;)V                (class=0, name=20, proto=3)
+  // 3: Landroid/app/Activity;.setContentView:(Landroid/view/View;)V          (class=0, name=21, proto=4)
+  // 4: Landroid/webkit/WebSettings;.setDomStorageEnabled:(Z)V                (class=4, name=22, proto=6)
+  // 5: Landroid/webkit/WebSettings;.setJavaScriptEnabled:(Z)V                (class=4, name=23, proto=6)
+  // 6: Landroid/webkit/WebView;.<init>:(Landroid/content/Context;)V          (class=5, name=0, proto=2)
+  // 7: Landroid/webkit/WebView;.canGoBack:()Z                                (class=5, name=14, proto=7)
+  // 8: Landroid/webkit/WebView;.getSettings:()Landroid/webkit/WebSettings;   (class=5, name=16, proto=0)
+  // 9: Landroid/webkit/WebView;.goBack:()V                                   (class=5, name=17, proto=1)
+  // 10: Landroid/webkit/WebView;.loadUrl:(Ljava/lang/String;)V               (class=5, name=18, proto=5)
+  // 11: Lcom/example/interactivereader/MainActivity;.<init>:()V              (class=6, name=0, proto=1)
+  // 12: Lcom/example/interactivereader/MainActivity;.onBackPressed:()V       (class=6, name=19, proto=1)
+  // 13: Lcom/example/interactivereader/MainActivity;.onCreate:(Landroid/os/Bundle;)V (class=6, name=20, proto=3)
   const methods = [
     { classIdx: 0, protoIdx: 1, nameIdx: 0 },
-    { classIdx: 0, protoIdx: 3, nameIdx: 17 },
-    { classIdx: 0, protoIdx: 4, nameIdx: 18 },
-    { classIdx: 4, protoIdx: 6, nameIdx: 19 },
-    { classIdx: 4, protoIdx: 6, nameIdx: 20 },
+    { classIdx: 0, protoIdx: 1, nameIdx: 19 },
+    { classIdx: 0, protoIdx: 3, nameIdx: 20 },
+    { classIdx: 0, protoIdx: 4, nameIdx: 21 },
+    { classIdx: 4, protoIdx: 6, nameIdx: 22 },
+    { classIdx: 4, protoIdx: 6, nameIdx: 23 },
     { classIdx: 5, protoIdx: 2, nameIdx: 0 },
-    { classIdx: 5, protoIdx: 0, nameIdx: 15 },
-    { classIdx: 5, protoIdx: 5, nameIdx: 16 },
+    { classIdx: 5, protoIdx: 7, nameIdx: 14 },
+    { classIdx: 5, protoIdx: 0, nameIdx: 16 },
+    { classIdx: 5, protoIdx: 1, nameIdx: 17 },
+    { classIdx: 5, protoIdx: 5, nameIdx: 18 },
     { classIdx: 6, protoIdx: 1, nameIdx: 0 },
-    { classIdx: 6, protoIdx: 3, nameIdx: 17 },
+    { classIdx: 6, protoIdx: 1, nameIdx: 19 },
+    { classIdx: 6, protoIdx: 3, nameIdx: 20 },
   ];
 
   // ULEB128 helper
@@ -1122,48 +1311,54 @@ function buildClassesDexWithShorties() {
   }
 
   // Code item 1: MainActivity.<init>()V
-  // registers_size = 1 (v0 = this), ins_size = 1, outs_size = 1, tries_size = 0
-  // instructions:
-  //   invoke-direct {v0}, Landroid/app/Activity;.<init>:()V (method 0) -> 70 10 00 00 00 00
-  //   return-void -> 0e 00
   const initCodeItem = Buffer.alloc(16 + 8);
   initCodeItem.writeUInt16LE(1, 0); // registers_size
   initCodeItem.writeUInt16LE(1, 2); // ins_size
   initCodeItem.writeUInt16LE(1, 4); // outs_size
   initCodeItem.writeUInt16LE(0, 6); // tries_size
   initCodeItem.writeUInt32LE(0, 8); // debug_info_off
-  initCodeItem.writeUInt32LE(4, 12); // insns_size (in 16-bit code units = 4)
+  initCodeItem.writeUInt32LE(4, 12); // insns_size (4 units)
   Buffer.from([0x70, 0x10, 0x00, 0x00, 0x00, 0x00, 0x0e, 0x00]).copy(initCodeItem, 16);
 
-  // Code item 2: MainActivity.onCreate(Landroid/os/Bundle;)V
+  // Code item 2: MainActivity.onBackPressed()V
+  // registers_size = 3 (v0=webView, v1=canGoBack, v2=this), ins_size = 1 (v2), outs_size = 1
+  const onBackPressedInsns = Buffer.from([
+    0x54, 0x20, 0x00, 0x00,             // iget-object v0, v2, MainActivity.webView (field 0)
+    0x38, 0x00, 0x0c, 0x00,             // if-eqz v0, :call_super (+12 units -> 0x000e)
+    0x6e, 0x10, 0x07, 0x00, 0x00, 0x00, // invoke-virtual {v0}, WebView.canGoBack:()Z (method 7)
+    0x0a, 0x01,                         // move-result v1
+    0x38, 0x01, 0x06, 0x00,             // if-eqz v1, :call_super (+6 units -> 0x000e)
+    0x6e, 0x10, 0x09, 0x00, 0x00, 0x00, // invoke-virtual {v0}, WebView.goBack:()V (method 9)
+    0x0e, 0x00,                         // return-void
+    0x6f, 0x10, 0x01, 0x00, 0x02, 0x00, // invoke-super {v2}, Activity.onBackPressed:()V (method 1)
+    0x0e, 0x00,                         // return-void
+  ]);
+  const onBackPressedCodeItem = Buffer.alloc(16 + onBackPressedInsns.length); // 16 + 36 = 52 bytes (4-byte aligned)
+  onBackPressedCodeItem.writeUInt16LE(3, 0); // registers_size
+  onBackPressedCodeItem.writeUInt16LE(1, 2); // ins_size
+  onBackPressedCodeItem.writeUInt16LE(1, 4); // outs_size
+  onBackPressedCodeItem.writeUInt16LE(0, 6); // tries_size
+  onBackPressedCodeItem.writeUInt32LE(0, 8); // debug_info_off
+  onBackPressedCodeItem.writeUInt32LE(onBackPressedInsns.length / 2, 12); // insns_size (18 units)
+  onBackPressedInsns.copy(onBackPressedCodeItem, 16);
+
+  // Code item 3: MainActivity.onCreate(Landroid/os/Bundle;)V
   // registers_size = 5 (v0=webView, v1=settings, v2=const1/url, v3=this, v4=bundle)
   // ins_size = 2 (v3, v4), outs_size = 2
-  // instructions:
-  // 1) invoke-super {v3, v4}, Activity.onCreate (method 1)          -> 6f 20 01 00 43 00
-  // 2) new-instance v0, Landroid/webkit/WebView; (type 5)           -> 22 00 05 00
-  // 3) invoke-direct {v0, v3}, WebView.<init>(Context) (method 5)   -> 70 20 05 00 30 00
-  // 4) invoke-virtual {v0}, WebView.getSettings() (method 6)        -> 6e 10 06 00 00 00
-  // 5) move-result-object v1                                        -> 0c 01
-  // 6) const/4 v2, #1                                               -> 12 12
-  // 7) invoke-virtual {v1, v2}, WebSettings.setJavaScriptEnabled(Z) (method 4) -> 6e 20 04 00 21 00
-  // 8) invoke-virtual {v1, v2}, WebSettings.setDomStorageEnabled(Z) (method 3) -> 6e 20 03 00 21 00
-  // 9) const-string v2, "file:///android_asset/index.html" (str 14) -> 1a 02 0e 00
-  // 10) invoke-virtual {v0, v2}, WebView.loadUrl(String) (method 7) -> 6e 20 07 00 20 00
-  // 11) invoke-virtual {v3, v0}, Activity.setContentView(View) (method 2) -> 6e 20 02 00 03 00
-  // 12) return-void                                                 -> 0e 00
   const onCreateInsns = Buffer.from([
-    0x6f, 0x20, 0x01, 0x00, 0x43, 0x00,
-    0x22, 0x00, 0x05, 0x00,
-    0x70, 0x20, 0x05, 0x00, 0x30, 0x00,
-    0x6e, 0x10, 0x06, 0x00, 0x00, 0x00,
-    0x0c, 0x01,
-    0x12, 0x12,
-    0x6e, 0x20, 0x04, 0x00, 0x21, 0x00,
-    0x6e, 0x20, 0x03, 0x00, 0x21, 0x00,
-    0x1a, 0x02, 0x0e, 0x00,
-    0x6e, 0x20, 0x07, 0x00, 0x20, 0x00,
-    0x6e, 0x20, 0x02, 0x00, 0x03, 0x00,
-    0x0e, 0x00,
+    0x6f, 0x20, 0x02, 0x00, 0x43, 0x00, // invoke-super {v3, v4}, Activity.onCreate (method 2)
+    0x22, 0x00, 0x05, 0x00,             // new-instance v0, Landroid/webkit/WebView; (type 5)
+    0x70, 0x20, 0x06, 0x00, 0x30, 0x00, // invoke-direct {v0, v3}, WebView.<init>(Context) (method 6)
+    0x5b, 0x30, 0x00, 0x00,             // iput-object v0, v3, MainActivity.webView (field 0)
+    0x6e, 0x10, 0x08, 0x00, 0x00, 0x00, // invoke-virtual {v0}, WebView.getSettings() (method 8)
+    0x0c, 0x01,                         // move-result-object v1
+    0x12, 0x12,                         // const/4 v2, #1
+    0x6e, 0x20, 0x05, 0x00, 0x21, 0x00, // invoke-virtual {v1, v2}, WebSettings.setJavaScriptEnabled(Z) (method 5)
+    0x6e, 0x20, 0x04, 0x00, 0x21, 0x00, // invoke-virtual {v1, v2}, WebSettings.setDomStorageEnabled(Z) (method 4)
+    0x1a, 0x02, 0x0f, 0x00,             // const-string v2, "file:///android_asset/index.html" (str 15)
+    0x6e, 0x20, 0x0a, 0x00, 0x20, 0x00, // invoke-virtual {v0, v2}, WebView.loadUrl(String) (method 10)
+    0x6e, 0x20, 0x03, 0x00, 0x03, 0x00, // invoke-virtual {v3, v0}, Activity.setContentView(View) (method 3)
+    0x0e, 0x00,                         // return-void
   ]);
   const onCreateCodeItem = Buffer.alloc(16 + onCreateInsns.length + 2); // +2 for 4-byte alignment
   onCreateCodeItem.writeUInt16LE(5, 0); // registers_size
@@ -1171,22 +1366,15 @@ function buildClassesDexWithShorties() {
   onCreateCodeItem.writeUInt16LE(2, 4); // outs_size
   onCreateCodeItem.writeUInt16LE(0, 6); // tries_size
   onCreateCodeItem.writeUInt32LE(0, 8); // debug_info_off
-  onCreateCodeItem.writeUInt32LE(onCreateInsns.length / 2, 12); // insns_size (25 units)
+  onCreateCodeItem.writeUInt32LE(onCreateInsns.length / 2, 12); // insns_size (27 units)
   onCreateInsns.copy(onCreateCodeItem, 16);
 
-  // Layout offsets:
-  // Header: 0x00 .. 0x70 (112 bytes)
-  // String IDs: 21 * 4 = 84 bytes (0x70 .. 0xC4)
-  // Type IDs: 10 * 4 = 40 bytes (0xC4 .. 0xEC)
-  // Proto IDs: 7 * 12 = 84 bytes (0xEC .. 0x140)
-  // Method IDs: 10 * 8 = 80 bytes (0x140 .. 0x190)
-  // Class Defs: 1 * 32 = 32 bytes (0x190 .. 0x1B0)
-  // Data section starts at 0x1B0 (432)
   const headerSize = 0x70;
   const stringIdsOff = headerSize;
   const typeIdsOff = stringIdsOff + strings.length * 4;
   const protoIdsOff = typeIdsOff + typeIds.length * 4;
-  const methodIdsOff = protoIdsOff + protos.length * 12;
+  const fieldIdsOff = protoIdsOff + protos.length * 12;
+  const methodIdsOff = fieldIdsOff + fields.length * 8;
   const classDefsOff = methodIdsOff + methods.length * 8;
   const dataOff = classDefsOff + 32;
 
@@ -1203,7 +1391,8 @@ function buildClassesDexWithShorties() {
 
   // 2) Code items (4-byte aligned)
   const initCodeOff = typeListsOff + typeListsBuf.length;
-  const onCreateCodeOff = initCodeOff + initCodeItem.length;
+  const onBackPressedCodeOff = initCodeOff + initCodeItem.length;
+  const onCreateCodeOff = onBackPressedCodeOff + onBackPressedCodeItem.length;
 
   // 3) String Data items
   const stringDataStartOff = onCreateCodeOff + onCreateCodeItem.length;
@@ -1221,18 +1410,25 @@ function buildClassesDexWithShorties() {
 
   // 4) Class Data item for MainActivity
   const classDataOff = curStrOff;
-  // static_fields=0, instance_fields=0, direct_methods=1, virtual_methods=1
-  // direct_method[0]: method_idx_diff=8, access_flags=0x10001 (PUBLIC | CONSTRUCTOR), code_off=initCodeOff
-  // virtual_method[0]: method_idx_diff=9, access_flags=0x0004 (PROTECTED), code_off=onCreateCodeOff
+  // static_fields=0, instance_fields=1, direct_methods=1, virtual_methods=2
   const classDataBuf = Buffer.concat([
+    uleb128(0), // static_fields_size
+    uleb128(1), // instance_fields_size
+    uleb128(1), // direct_methods_size
+    uleb128(2), // virtual_methods_size
+    // instance_field[0]: field_idx_diff=0, access_flags=0x0002 (PRIVATE)
     uleb128(0),
-    uleb128(0),
-    uleb128(1),
-    uleb128(1),
-    uleb128(8),
+    uleb128(0x0002),
+    // direct_method[0]: method_idx_diff=11, access_flags=0x10001 (PUBLIC | CONSTRUCTOR), code_off=initCodeOff
+    uleb128(11),
     uleb128(0x10001),
     uleb128(initCodeOff),
-    uleb128(9),
+    // virtual_method[0]: method_idx_diff=12, access_flags=0x0001 (PUBLIC), code_off=onBackPressedCodeOff
+    uleb128(12),
+    uleb128(0x0001),
+    uleb128(onBackPressedCodeOff),
+    // virtual_method[1]: method_idx_diff=1 (13 - 12), access_flags=0x0004 (PROTECTED), code_off=onCreateCodeOff
+    uleb128(1),
     uleb128(0x0004),
     uleb128(onCreateCodeOff),
   ]);
@@ -1242,18 +1438,17 @@ function buildClassesDexWithShorties() {
   const alignPadBuf = Buffer.alloc(alignPadLen, 0);
   const mapListOff = afterClassDataOff + alignPadLen;
 
-  // 5) Map List (11 items)
-  // Header (0x0000), StringId (0x0001), TypeId (0x0002), ProtoId (0x0003), MethodId (0x0005), ClassDef (0x0006),
-  // TypeList (0x1001), CodeItem (0x2001), StringData (0x2002), ClassData (0x2000), MapList (0x1000)
+  // 5) Map List (12 items)
   const mapItems = [
     { type: 0x0000, size: 1, offset: 0 },
     { type: 0x0001, size: strings.length, offset: stringIdsOff },
     { type: 0x0002, size: typeIds.length, offset: typeIdsOff },
     { type: 0x0003, size: protos.length, offset: protoIdsOff },
+    { type: 0x0004, size: fields.length, offset: fieldIdsOff },
     { type: 0x0005, size: methods.length, offset: methodIdsOff },
     { type: 0x0006, size: 1, offset: classDefsOff },
     { type: 0x1001, size: paramTypes.length, offset: typeListsOff },
-    { type: 0x2001, size: 2, offset: initCodeOff },
+    { type: 0x2001, size: 3, offset: initCodeOff },
     { type: 0x2002, size: strings.length, offset: stringDataStartOff },
     { type: 0x2000, size: 1, offset: classDataOff },
     { type: 0x1000, size: 1, offset: mapListOff },
@@ -1288,8 +1483,8 @@ function buildClassesDexWithShorties() {
   dex.writeUInt32LE(typeIdsOff, 68);
   dex.writeUInt32LE(protos.length, 72);
   dex.writeUInt32LE(protoIdsOff, 76);
-  dex.writeUInt32LE(0, 80); // field_ids_size
-  dex.writeUInt32LE(0, 84); // field_ids_off
+  dex.writeUInt32LE(fields.length, 80); // field_ids_size
+  dex.writeUInt32LE(fieldIdsOff, 84); // field_ids_off
   dex.writeUInt32LE(methods.length, 88);
   dex.writeUInt32LE(methodIdsOff, 92);
   dex.writeUInt32LE(1, 96); // class_defs_size
@@ -1321,6 +1516,14 @@ function buildClassesDexWithShorties() {
     }
   });
 
+  // Field IDs
+  fields.forEach((f, i) => {
+    const base = fieldIdsOff + i * 8;
+    dex.writeUInt16LE(f.classIdx, base);
+    dex.writeUInt16LE(f.typeIdx, base + 2);
+    dex.writeUInt32LE(f.nameIdx, base + 4);
+  });
+
   // Method IDs
   methods.forEach((m, i) => {
     const base = methodIdsOff + i * 8;
@@ -1342,6 +1545,7 @@ function buildClassesDexWithShorties() {
   // Copy Data Section
   typeListsBuf.copy(dex, typeListsOff);
   initCodeItem.copy(dex, initCodeOff);
+  onBackPressedCodeItem.copy(dex, onBackPressedCodeOff);
   onCreateCodeItem.copy(dex, onCreateCodeOff);
   Buffer.concat(stringDataChunks).copy(dex, stringDataStartOff);
   classDataBuf.copy(dex, classDataOff);

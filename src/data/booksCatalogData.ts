@@ -1,5 +1,4 @@
 import { EASY_GOOD_DEEDS_BOOK } from './easyGoodDeedsData';
-import { ISLAMIC_PSYCHOLOGY_BOOK } from './islamicPsychologyData';
 
 export type ChapterStatus = 'LOCKED' | 'AVAILABLE' | 'PASSED';
 
@@ -50,5 +49,4 @@ export interface ChapterProgressRecord {
 
 export const LIBRARY_BOOKS: BookData[] = [
   EASY_GOOD_DEEDS_BOOK,
-  ISLAMIC_PSYCHOLOGY_BOOK,
 ];

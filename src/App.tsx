@@ -416,20 +416,11 @@ export default function App() {
         chapters: [...baseBook.chapters, ...extraChapters],
       };
       const sortedChapters = [...book.chapters].sort((a, b) => a.chapterOrder - b.chapterOrder);
-      let isPreviousPassed = true; // First chapter is always unlocked
 
-      const chapterItems = sortedChapters.map((ch, idx) => {
+      const chapterItems = sortedChapters.map((ch) => {
         const prog = progressMap[ch.id];
         const isPassed = Boolean(prog?.isCompleted && prog?.testPassed);
-        let status: ChapterStatus;
-        if (isPassed) {
-          status = 'PASSED';
-        } else if (idx === 0 || isPreviousPassed) {
-          status = 'AVAILABLE';
-        } else {
-          status = 'LOCKED';
-        }
-        isPreviousPassed = isPassed;
+        const status = (isPassed ? 'PASSED' : 'AVAILABLE') as ChapterStatus;
 
         return {
           ...ch,
@@ -554,10 +545,6 @@ export default function App() {
     bookId: number,
     chapter: ChapterData & { status: ChapterStatus; lastCharOffset: number }
   ) => {
-    if (chapter.status === 'LOCKED') {
-      showToast('Сначала пройдите предыдущую главу и тест!');
-      return;
-    }
     setActiveBookId(bookId);
     setActiveChapterId(chapter.id);
     setAnchorCharOffset(chapter.lastCharOffset || 0);
@@ -926,7 +913,7 @@ export default function App() {
       {/* Offline Banner */}
       {!isOnline && (
         <div className="bg-amber-900 text-amber-50 px-6 py-2 text-xs font-medium text-center">
-          Автономный офлайн-режим · Обе книги («Простые благодеяния» и «Психология: исламский дискурс», {totalCatalogChaptersCount} глав, {totalCatalogQuestionsCount} вопросов) доступны локально
+          Автономный офлайн-режим · Книга «Простые благодеяния» ({totalCatalogChaptersCount} глав, {totalCatalogQuestionsCount} вопросов) доступна локально
         </div>
       )}
 
@@ -948,7 +935,7 @@ export default function App() {
               <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
                 <div className="space-y-1.5">
                   <div className="text-xs text-stone-500 font-mono-tabular">
-                    Каталог библиотеки · 2 книги · {totalCatalogChaptersCount} глав · {totalCatalogQuestionsCount} вопросов · Каскадная разблокировка
+                    Каталог библиотеки · {totalCatalogChaptersCount} глав · {totalCatalogQuestionsCount} вопросов · Все главы открыты
                   </div>
                   <h1 className="text-3xl sm:text-4xl font-bold text-slate-900 font-display">
                     Библиотека интерактивного чтения
@@ -1073,7 +1060,7 @@ export default function App() {
                           Оглавление книги и проверочные тесты
                         </h2>
                         <p className="text-xs text-stone-500 mt-0.5">
-                          Нажмите на доступную главу для чтения. Следующая часть открывается после сдачи теста минимум на 75%.
+                          Все главы открыты — выберите любую главу для чтения или прохождения теста без ограничений.
                         </p>
                       </div>
                       <div className="flex items-center gap-2.5 shrink-0">
@@ -1399,13 +1386,30 @@ export default function App() {
                   </div>
 
                   {isLastReaderPage && (
-                    <button
-                      onClick={() => handleStartQuiz(activeBookId, currentChapter.id)}
-                      className="px-4 py-2.5 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-xs font-semibold flex items-center gap-2 min-h-[44px] shadow-xs transition-colors"
-                    >
-                      <span>Пройти тест</span>
-                      <ChevronRight className="w-4 h-4" />
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleStartQuiz(activeBookId, currentChapter.id)}
+                        className="px-3.5 py-2.5 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-xs font-semibold flex items-center gap-1.5 min-h-[44px] shadow-xs transition-colors"
+                      >
+                        <span>Пройти тест</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                      {nextChapterObj && (
+                        <button
+                          onClick={() =>
+                            handleChapterClicked(activeBookId, {
+                              ...nextChapterObj,
+                              status: 'AVAILABLE',
+                              lastCharOffset: progressMap[nextChapterObj.id]?.lastCharOffset || 0,
+                            })
+                          }
+                          className="px-3.5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-semibold flex items-center gap-1.5 min-h-[44px] shadow-xs transition-colors"
+                        >
+                          <span>След. глава</span>
+                          <ArrowRight className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               </div>
@@ -1747,7 +1751,7 @@ export default function App() {
                   />
                   <div className="space-y-2">
                     <div className="text-xs text-stone-500 font-mono-tabular">
-                      Kotlin 2.0.21 · Target SDK 35 · Room 2.6.1 · 2 книги ({totalCatalogChaptersCount} глав, {totalCatalogQuestionsCount} вопросов) · Иконка ic_launcher
+                      Kotlin 2.0.21 · Target SDK 35 · Room 2.6.1 · «Простые благодеяния» ({totalCatalogChaptersCount} глав, {totalCatalogQuestionsCount} вопросов) · Иконка ic_launcher
                     </div>
                     <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 font-display">
                       Скачивание готового APK и исходного проекта Android Studio
@@ -2007,11 +2011,7 @@ export default function App() {
                 </button>
                 <button
                   onClick={() => {
-                    setRawBookSlug(
-                      architectBookId === 5
-                        ? 'prostye-blagodeyaniya'
-                        : 'psihologiya-islamskiy-diskurs'
-                    );
+                    setRawBookSlug('prostye-blagodeyaniya');
                     setRawChapterNumber(architectBookEntry.chapters.length + 1);
                     setArchitectMode('create_raw');
                   }}

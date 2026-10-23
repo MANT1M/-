@@ -890,5 +890,169 @@ fun ArabicTypographyDemoScreen(
 }
 `,
   },
+  {
+    path: 'app/src/main/java/com/example/interactivereader/core/navigation/AppNavHost.kt',
+    category: 'Navigation & App',
+    description: 'Навигационный граф Navigation Compose 2.8+ с сохранением Back Stack и многоуровневым перехватом BackHandler (Predictive Back API 33+)',
+    content: `package com.example.interactivereader.core.navigation
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import androidx.navigation.toRoute
+import kotlinx.serialization.Serializable
+
+@Serializable
+sealed interface AppRoute {
+    @Serializable
+    data object Library : AppRoute
+
+    @Serializable
+    data class Reader(val bookId: Long, val chapterId: Long) : AppRoute
+
+    @Serializable
+    data class Quiz(val bookId: Long, val chapterId: Long) : AppRoute
+}
+
+/**
+ * Безопасный возврат назад: не сворачивает Activity, если стек уже на стартовом экране.
+ */
+fun NavHostController.navigateBackSafely(): Boolean {
+    return if (previousBackStackEntry != null) {
+        popBackStack()
+    } else {
+        false
+    }
+}
+
+@Composable
+fun AppNavHost(
+    modifier: Modifier = Modifier,
+    navController: NavHostController = rememberNavController()
+) {
+    NavHost(
+        navController = navController,
+        startDestination = AppRoute.Library,
+        modifier = modifier
+    ) {
+        composable<AppRoute.Library> {
+            var selectedBookSheetId by rememberSaveable { mutableStateOf<Long?>(null) }
+            var searchQuery by rememberSaveable { mutableStateOf("") }
+
+            // Приоритет 2 (внешний): если активен поиск — очищаем строку поиска вместо выхода из приложения
+            BackHandler(enabled = searchQuery.isNotEmpty()) {
+                searchQuery = ""
+            }
+
+            // Приоритет 1 (внутренний, регистрируется последним -> срабатывает первым):
+            // закрытие открытой шторки оглавления книги
+            BackHandler(enabled = selectedBookSheetId != null) {
+                selectedBookSheetId = null
+            }
+
+            LibraryCatalogScreen(
+                searchQuery = searchQuery,
+                selectedBookSheetId = selectedBookSheetId,
+                onSearchQueryChange = { searchQuery = it },
+                onOpenBookSheet = { bookId -> selectedBookSheetId = bookId },
+                onDismissBookSheet = { selectedBookSheetId = null },
+                onOpenChapter = { bookId, chapterId ->
+                    selectedBookSheetId = null
+                    // Переход вперед БЕЗ popUpTo(Library) { inclusive = true },
+                    // чтобы экран Library гарантированно оставался в Back Stack
+                    navController.navigate(AppRoute.Reader(bookId = bookId, chapterId = chapterId)) {
+                        launchSingleTop = true
+                    }
+                }
+            )
+        }
+
+        composable<AppRoute.Reader> { backStackEntry ->
+            val route = backStackEntry.toRoute<AppRoute.Reader>()
+            var isSettingsSheetOpen by rememberSaveable { mutableStateOf(false) }
+            var activeFootnoteId by rememberSaveable { mutableStateOf<String?>(null) }
+
+            // Уровень 3: выход из режима чтения обратно в каталог (Library)
+            BackHandler(enabled = true) {
+                navController.navigateBackSafely()
+            }
+
+            // Уровень 2: закрытие нижней шторки настроек шрифта/темы
+            BackHandler(enabled = isSettingsSheetOpen) {
+                isSettingsSheetOpen = false
+            }
+
+            // Уровень 1 (наивысший приоритет — композируется последним):
+            // закрытие всплывающего окна сноски [N]
+            BackHandler(enabled = activeFootnoteId != null) {
+                activeFootnoteId = null
+            }
+
+            ReaderScreen(
+                bookId = route.bookId,
+                chapterId = route.chapterId,
+                isSettingsSheetOpen = isSettingsSheetOpen,
+                activeFootnoteId = activeFootnoteId,
+                onToggleSettingsSheet = { isSettingsSheetOpen = !isSettingsSheetOpen },
+                onOpenFootnote = { fnId -> activeFootnoteId = fnId },
+                onDismissFootnote = { activeFootnoteId = null },
+                onNavigateBack = { navController.navigateBackSafely() },
+                onStartQuiz = {
+                    // Переход к тесту сохраняет Reader в стеке, чтобы жест «Назад» в тесте
+                    // возвращал пользователя обратно к тексту главы
+                    navController.navigate(
+                        AppRoute.Quiz(bookId = route.bookId, chapterId = route.chapterId)
+                    ) {
+                        launchSingleTop = true
+                    }
+                }
+            )
+        }
+
+        composable<AppRoute.Quiz> { backStackEntry ->
+            val route = backStackEntry.toRoute<AppRoute.Quiz>()
+
+            // Перехват системного свайпа «Назад» на экране теста -> возврат в главу (Reader)
+            BackHandler(enabled = true) {
+                navController.navigateBackSafely()
+            }
+
+            QuizScreen(
+                bookId = route.bookId,
+                chapterId = route.chapterId,
+                onBackToReader = { navController.navigateBackSafely() },
+                onReturnToLibrary = {
+                    // Возврат в корень каталога без удаления самого Library из стека (inclusive = false)
+                    navController.popBackStack(
+                        route = AppRoute.Library,
+                        inclusive = false
+                    )
+                },
+                onOpenNextChapter = { nextChapterId ->
+                    // Заменяем текущий стек Quiz -> Reader на новую главу, оставляя Library внизу стека
+                    navController.navigate(
+                        AppRoute.Reader(bookId = route.bookId, chapterId = nextChapterId)
+                    ) {
+                        popUpTo(navController.graph.findStartDestination().id) {
+                            inclusive = false
+                        }
+                        launchSingleTop = true
+                    }
+                }
+            )
+        }
+    }
+}
+`,
+  },
 ];
 

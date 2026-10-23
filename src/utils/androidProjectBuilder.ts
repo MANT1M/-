@@ -19,10 +19,8 @@ export function getAndroidProjectFiles(): ProjectFileItem[] {
 
   const progressKotlinList = EASY_GOOD_DEEDS_BOOK.chapters
     .map(
-      (ch, idx) =>
-        `ChapterProgressEntity(bookId, ${ch.id}L, ChapterStatus.${
-          idx === 0 ? 'AVAILABLE' : 'LOCKED'
-        }, 0, 0, now)`
+      (ch) =>
+        `ChapterProgressEntity(bookId, ${ch.id}L, ChapterStatus.AVAILABLE, 0, 0, now)`
     )
     .join(',\n                    ');
 
@@ -329,7 +327,7 @@ dependencies {
     {
       path: 'app/src/main/AndroidManifest.xml',
       category: 'Gradle & Config',
-      description: 'Манифест Android 15 (Edge-to-Edge, точка входа InteractiveReaderApplication)',
+      description: 'Манифест Android 15 (Predictive Back, Edge-to-Edge, точка входа InteractiveReaderApplication)',
       content: `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
@@ -337,6 +335,7 @@ dependencies {
     <application
         android:name=".InteractiveReaderApplication"
         android:allowBackup="true"
+        android:enableOnBackInvokedCallback="true"
         android:hardwareAccelerated="true"
         android:label="Интерактивная Читалка"
         android:supportsRtl="true"
